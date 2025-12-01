@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Guest Blog Validation Tool
 
 A comprehensive validation and management system for guest blog sites, designed to streamline the process of validating, pricing, and integrating guest blog opportunities with the main SEO Link Building project.
@@ -341,3 +342,6 @@ Development Team - SEO Link Building Project
 **Current Phase:** Phase 13 - Push to Main Project Integration 🚀  
 **Status:** 95% Complete - Production Ready  
 **Last Updated:** December 2025
+=======
+# guest-blog-validation-tool
+>>>>>>> b90b26778e418d54ac7058bbf2f1d68833c7b568
