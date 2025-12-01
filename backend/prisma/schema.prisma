@@ -1,0 +1,263 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// User Model
+model User {
+  id                    String                  @id @default(uuid())
+  email                 String                  @unique
+  password              String
+  firstName             String
+  lastName              String
+  role                  UserRole                @default(ADMIN)
+  isActive              Boolean                 @default(true)
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  
+  // Relations
+  twoFactorAuth         TwoFactorAuth?
+  assignedTasks         DataUploadTask[]        @relation("AssignedAdmin")
+  uploadedTasks         DataUploadTask[]        @relation("UploadedBy")
+  activityLogs          ActivityLog[]
+  reachedDataFinal      DataFinal[]             @relation("ReachedByUser")
+  pushedDataFinal       DataFinal[]             @relation("PushedByUser")
+  completedProcessData  CompletedProcessData[]  @relation("CompletedByUser")
+
+  @@map("users")
+}
+
+enum UserRole {
+  ADMIN
+  SUPER_ADMIN
+}
+
+// Two-Factor Authentication Model
+model TwoFactorAuth {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  secret        String
+  backupCodes   Json     // Array of hashed backup codes
+  isEnabled     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  // Relations
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("two_factor_auth")
+}
+
+// Data Upload Task Model
+model DataUploadTask {
+  id                String           @id @default(uuid())
+  fileName          String
+  totalRecords      Int
+  validRecords      Int
+  invalidRecords    Int
+  processedRecords  Int              @default(0)
+  duplicateRecords  Int              @default(0)
+  pushedRecords     Int              @default(0)
+  assignedTo        String?
+  createdBy         String
+  status            TaskStatus       @default(PENDING)
+  notes             String?
+  uploadedAt        DateTime         @default(now())
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  
+  // Relations
+  assignedToUser    User?            @relation("AssignedAdmin", fields: [assignedTo], references: [id])
+  createdByUser     User             @relation("UploadedBy", fields: [createdBy], references: [id])
+  dataInProcess     DataInProcess[]
+
+  @@index([assignedTo])
+  @@index([createdBy])
+  @@index([status])
+  @@map("data_upload_tasks")
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+// Data In Process Model
+model DataInProcess {
+  id                String          @id @default(uuid())
+  uploadTaskId      String
+  websiteUrl        String
+  category          String?
+  language          String?
+  country           String?
+  daRange           String?
+  price             Float?
+  linkType          String?
+  tat               String?
+  publisherName     String?
+  publisherEmail    String?
+  publisherContact  String?
+  notes             String?
+  // New fields for domain metrics
+  da                Int?            // Domain Authority (0-100)
+  dr                Int?            // Domain Rating (0-100)
+  traffic           Int?            // Monthly traffic
+  ss                Int?            // Spam Score (0-100)
+  status            ProcessStatus   @default(PENDING)
+  reachedBy         String?         // Admin who marked as reached
+  reachedByName     String?         // Name of admin who marked as reached
+  reachedAt         DateTime?       // When marked as reached
+  lastModifiedBy    String?         // User who last modified this record
+  lastModifiedByName String?        // Name of user who last modified
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  
+  // Relations
+  uploadTask        DataUploadTask  @relation(fields: [uploadTaskId], references: [id], onDelete: Cascade)
+
+  @@index([uploadTaskId])
+  @@index([status])
+  @@index([websiteUrl])
+  @@map("data_in_process")
+}
+
+enum ProcessStatus {
+  PENDING
+  REACHED
+  NOT_REACHED
+  NO_ACTION
+  NO_ACTION_NEEDED
+  VERIFIED
+  REJECTED
+  PUSHED
+}
+
+// Data Final Model
+model DataFinal {
+  id                  String              @id @default(uuid())
+  websiteUrl          String
+  category            String?
+  language            String?
+  country             String?
+  daRange             String?
+  linkType            String?
+  tat                 String?
+  publisherName       String?
+  publisherEmail      String?
+  publisherContact    String?
+  notes               String?
+  // Domain metrics
+  da                  Int?                // Domain Authority (0-100)
+  dr                  Int?                // Domain Rating (0-100)
+  traffic             Int?                // Monthly traffic
+  ss                  Int?                // Spam Score (0-100)
+  // Pricing fields
+  gbBasePrice         Float?              // Guest Blog Base Price
+  liBasePrice         Float?              // LinkedIn Base Price
+  status              SiteStatus          @default(ACTIVE)
+  negotiationStatus   NegotiationStatus   @default(IN_PROGRESS)
+  // Tracking fields
+  reachedBy           String?             // Admin who marked as reached
+  reachedByName       String?             // Name of admin who marked as reached
+  reachedAt           DateTime?           // When marked as reached
+  lastModifiedBy      String?             // User who last modified this record
+  lastModifiedByName  String?             // Name of user who last modified
+  mainProjectId       String?             // ID in main project after push
+  pushedAt            DateTime?           // When pushed to main project
+  pushedBy            String?             // Super Admin who pushed
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  
+  // Relations
+  reachedByUser       User?               @relation("ReachedByUser", fields: [reachedBy], references: [id])
+  pushedByUser        User?               @relation("PushedByUser", fields: [pushedBy], references: [id])
+
+  @@index([mainProjectId])
+  @@index([pushedBy])
+  @@index([reachedBy])
+  @@index([websiteUrl])
+  @@index([status])
+  @@index([negotiationStatus])
+  @@map("data_final")
+}
+
+enum SiteStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum NegotiationStatus {
+  IN_PROGRESS
+  DONE
+}
+
+// Completed Process Data Model
+model CompletedProcessData {
+  id                  String              @id @default(uuid())
+  websiteUrl          String
+  category            String?
+  language            String?
+  country             String?
+  daRange             String?
+  linkType            String?
+  tat                 String?
+  publisherName       String?
+  publisherEmail      String?
+  publisherContact    String?
+  notes               String?
+  // Domain metrics
+  da                  Int?                // Domain Authority
+  dr                  Int?                // Domain Rating
+  traffic             Int?                // Monthly traffic
+  ss                  Int?                // Spam Score
+  // Pricing
+  gbBasePrice         Float?              // Guest Blog Base Price
+  liBasePrice         Float?              // LinkedIn Base Price
+  status              String?             // ACTIVE/INACTIVE
+  negotiationStatus   String?             // IN_PROGRESS/DONE
+  // Tracking
+  mainProjectId       String?             // ID in main project
+  completedAt         DateTime?           // When pushed successfully
+  completedBy         String?             // Super Admin who pushed
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  
+  // Relations
+  completedByUser     User?               @relation("CompletedByUser", fields: [completedBy], references: [id])
+
+  @@index([mainProjectId])
+  @@index([completedBy])
+  @@index([websiteUrl])
+  @@map("completed_process_data")
+}
+
+// Activity Log Model
+model ActivityLog {
+  id          String   @id @default(uuid())
+  userId      String
+  action      String
+  entityType  String
+  entityId    String?
+  details     Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([action])
+  @@index([entityType])
+  @@index([createdAt])
+  @@map("activity_logs")
+}

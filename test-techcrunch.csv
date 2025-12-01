@@ -1,0 +1,3 @@
+site,category,language,country,da_range,price,link_type,tat,publisher_name,publisher_email,publisher_contact,notes
+techcrunch.com,Technology,English,USA,90-100,500,Dofollow,1-2 days,TechCrunch,contact@techcrunch.com,+1234567890,Test domain that should be skipped
+newdomain123.com,Technology,English,USA,50-60,100,Dofollow,3-5 days,New Publisher,new@example.com,+9876543210,This should be added as new

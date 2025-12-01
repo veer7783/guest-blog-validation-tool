@@ -1,0 +1,34 @@
+╔═══════════════════════════════════════════════════════════════╗
+║                  🚨 EMERGENCY 2FA RESET 🚨                    ║
+╚═══════════════════════════════════════════════════════════════╝
+
+IF YOU CAN'T LOGIN DUE TO 2FA ISSUES:
+
+1. Open terminal/command prompt
+
+2. Navigate to backend folder:
+   cd d:\guest-blog-validation-tool\backend
+
+3. Run reset script:
+   node reset-2fa.js <your-email>
+
+   Example:
+   node reset-2fa.js superadmin@guestblog.com
+
+4. Login without 2FA (just email + password)
+
+5. Setup 2FA again from Users module
+
+═══════════════════════════════════════════════════════════════
+
+OTHER USEFUL COMMANDS:
+
+• Check current valid code:
+  node test-2fa-code.js
+
+• Check 2FA status:
+  node check-2fa.js
+
+═══════════════════════════════════════════════════════════════
+
+KEEP THIS FILE SAFE - YOU'LL NEED IT IF LOCKED OUT!
