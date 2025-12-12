@@ -7,6 +7,8 @@ import { DataInProcessService } from '../services/dataInProcess.service';
 import { cleanupFile } from '../middleware/upload';
 import { ActivityLogService } from '../services/activityLog.service';
 import { getClientIp } from '../utils/helpers';
+import { MainProjectAPIService } from '../services/mainProjectAPI.service';
+import prisma from '../config/database';
 
 export class UploadController {
   /**
@@ -69,12 +71,32 @@ export class UploadController {
         }
       }
 
+      // Check if CSV has price data
+      const hasPriceData = uniqueRowsInCSV.some(row => row.price && parseFloat(row.price) > 0);
+      
       // Now check unique URLs against database and main project
       const websiteUrls = uniqueRowsInCSV.map(row => row.websiteUrl);
       let duplicateCheck;
+      let priceCheckResults: any = null;
+      let priceSkippedDomains: Array<{ domain: string; reason: string; currentPrice?: number; newPrice?: number }> = [];
+      let priceUpdatedDomains: Array<{ domain: string; currentPrice: number; newPrice: number }> = [];
       
       try {
         duplicateCheck = await DuplicateCheckService.checkBulk(websiteUrls);
+        
+        // If CSV has price data, check prices against main project for duplicates
+        if (hasPriceData) {
+          const sitesWithPrices = uniqueRowsInCSV
+            .filter(row => row.price && parseFloat(row.price) > 0)
+            .map(row => ({
+              site_url: row.websiteUrl,
+              new_price: parseFloat(row.price!)
+            }));
+          
+          if (sitesWithPrices.length > 0) {
+            priceCheckResults = await MainProjectAPIService.checkPrices(sitesWithPrices);
+          }
+        }
       } catch (error: any) {
         // If Main Project API fails, return specific error
         if (error.message && error.message.includes('Main Project API')) {
@@ -91,13 +113,98 @@ export class UploadController {
         throw error;
       }
 
-      // Filter out duplicates from database/main project
-      const uniqueRows = uniqueRowsInCSV.filter((row, index) => 
-        !duplicateCheck.duplicates[index].isDuplicate
-      );
+      // Filter rows based on duplicate check and price comparison
+      let uniqueRows: typeof uniqueRowsInCSV = [];
+      // Track rows that need price update in current system (not new records)
+      const rowsToUpdateInCurrentSystem: Array<{ id: string; price: number; source: string }> = [];
+      
+      if (hasPriceData && priceCheckResults?.success) {
+        // Price-based filtering: allow duplicates if new price is lower
+        for (let i = 0; i < uniqueRowsInCSV.length; i++) {
+          const row = uniqueRowsInCSV[i];
+          const dupCheck = duplicateCheck.duplicates[i];
+          const rowPrice = row.price ? parseFloat(row.price) : 0;
+          
+          // Check price result for this site (from main project)
+          const priceResult = priceCheckResults.results.find(
+            (r: any) => r.site_url.toLowerCase() === row.websiteUrl.toLowerCase()
+          );
+          
+          if (!dupCheck.isDuplicate) {
+            // Not a duplicate - include it as new
+            uniqueRows.push(row);
+          } else if (rowPrice > 0) {
+            // It's a duplicate with price - check source and compare prices
+            
+            if (dupCheck.source === 'main_project' && priceResult) {
+              // Duplicate in main project - use main project price check
+              if (priceResult.action === 'UPDATE') {
+                // Price is lower - include for update (will be sent to main project)
+                uniqueRows.push(row);
+                priceUpdatedDomains.push({
+                  domain: row.websiteUrl,
+                  currentPrice: priceResult.current_price || 0,
+                  newPrice: rowPrice
+                });
+              } else if (priceResult.action === 'SKIP_HIGHER' || priceResult.action === 'SKIP_SAME') {
+                // Price is same or higher - skip
+                priceSkippedDomains.push({
+                  domain: row.websiteUrl,
+                  reason: priceResult.action === 'SKIP_SAME' ? 'Same price' : 'Higher price',
+                  currentPrice: priceResult.current_price,
+                  newPrice: rowPrice
+                });
+              } else if (priceResult.action === 'CREATE') {
+                // Doesn't exist in main project - include it
+                uniqueRows.push(row);
+              }
+            } else if (dupCheck.source === 'data_in_process' || dupCheck.source === 'data_final') {
+              // Duplicate in current system - compare with existing price
+              const existingPrice = dupCheck.existingPrice || 0;
+              
+              if (rowPrice < existingPrice) {
+                // New price is lower - UPDATE existing record (don't create new)
+                rowsToUpdateInCurrentSystem.push({
+                  id: dupCheck.existingId!,
+                  price: rowPrice,
+                  source: dupCheck.source
+                });
+                priceUpdatedDomains.push({
+                  domain: row.websiteUrl,
+                  currentPrice: existingPrice,
+                  newPrice: rowPrice
+                });
+              } else if (rowPrice === existingPrice) {
+                // Same price - skip
+                priceSkippedDomains.push({
+                  domain: row.websiteUrl,
+                  reason: 'Same price (in current system)',
+                  currentPrice: existingPrice,
+                  newPrice: rowPrice
+                });
+              } else {
+                // Higher price - skip
+                priceSkippedDomains.push({
+                  domain: row.websiteUrl,
+                  reason: 'Higher price (in current system)',
+                  currentPrice: existingPrice,
+                  newPrice: rowPrice
+                });
+              }
+            }
+          } else {
+            // Duplicate without price - skip (old behavior)
+          }
+        }
+      } else {
+        // No price data - use original duplicate filtering
+        uniqueRows = uniqueRowsInCSV.filter((row, index) => 
+          !duplicateCheck.duplicates[index].isDuplicate
+        );
+      }
 
-      // Check if there are any new domains to process
-      if (uniqueRows.length === 0) {
+      // Check if there are any new domains OR price updates to process
+      if (uniqueRows.length === 0 && rowsToUpdateInCurrentSystem.length === 0) {
         cleanupFile(filePath);
         
         // Get duplicate domains with their sources
@@ -118,7 +225,9 @@ export class UploadController {
 
         res.status(200).json({
           success: false,
-          message: 'No new domains to process. All domains are duplicates.',
+          message: hasPriceData 
+            ? 'No new domains to process. All domains are duplicates or have same/higher prices.'
+            : 'No new domains to process. All domains are duplicates.',
           data: {
             summary: {
               totalRows: parsedData.totalRows,
@@ -129,11 +238,72 @@ export class UploadController {
               duplicatesInCSV: duplicatesInCSV.length,
               duplicatesInSystem: duplicateCheck.duplicateCount,
               duplicatesInMainProject: duplicatesInMainProject,
-              duplicatesInCurrentSystem: duplicatesInCurrentSystem
+              duplicatesInCurrentSystem: duplicatesInCurrentSystem,
+              priceSkipped: priceSkippedDomains.length,
+              priceUpdates: priceUpdatedDomains.length
             },
             duplicateDomains: duplicateDomainsWithSource.map(d => d.domain),
             duplicateDetails: duplicateDomainsWithSource,
-            csvDuplicates: duplicatesInCSV
+            csvDuplicates: duplicatesInCSV,
+            priceSkippedDomains: priceSkippedDomains,
+            priceUpdatedDomains: priceUpdatedDomains
+          }
+        });
+        return;
+      }
+
+      // Handle case where we only have price updates (no new domains)
+      if (uniqueRows.length === 0 && rowsToUpdateInCurrentSystem.length > 0) {
+        // Update existing records in current system with lower prices
+        for (const update of rowsToUpdateInCurrentSystem) {
+          if (update.source === 'data_in_process') {
+            await prisma.dataInProcess.update({
+              where: { id: update.id },
+              data: { price: update.price }
+            });
+          } else if (update.source === 'data_final') {
+            await prisma.dataFinal.update({
+              where: { id: update.id },
+              data: { gbBasePrice: update.price }
+            });
+          }
+        }
+
+        cleanupFile(filePath);
+
+        // Get duplicate domains with their sources
+        const duplicateDomainsWithSource = duplicateCheck.duplicates
+          .filter(d => d.isDuplicate)
+          .map(d => ({
+            domain: d.websiteUrl,
+            source: d.source === 'main_project' ? 'Links Management App' : 
+                    d.source === 'data_in_process' ? 'Current System (In Process)' :
+                    d.source === 'data_final' ? 'Current System (Final)' : 'Unknown'
+          }));
+
+        const totalDuplicates = duplicateCheck.duplicateCount + duplicatesInCSV.length;
+        const duplicatesInMainProject = duplicateDomainsWithSource.filter(d => d.source === 'Links Management App').length;
+        const duplicatesInCurrentSystem = duplicateDomainsWithSource.filter(d => d.source.startsWith('Current System')).length;
+
+        res.status(200).json({
+          success: true,
+          message: `Updated prices for ${rowsToUpdateInCurrentSystem.length} existing record(s).`,
+          data: {
+            summary: {
+              totalRows: parsedData.totalRows,
+              validRows: parsedData.validCount,
+              invalidRows: parsedData.invalidCount,
+              uniqueRows: 0,
+              duplicateRows: totalDuplicates,
+              duplicatesInCSV: duplicatesInCSV.length,
+              duplicatesInSystem: duplicateCheck.duplicateCount,
+              duplicatesInMainProject: duplicatesInMainProject,
+              duplicatesInCurrentSystem: duplicatesInCurrentSystem,
+              priceSkipped: priceSkippedDomains.length,
+              priceUpdates: rowsToUpdateInCurrentSystem.length
+            },
+            priceUpdatedDomains: priceUpdatedDomains,
+            priceSkippedDomains: priceSkippedDomains
           }
         });
         return;
@@ -148,19 +318,38 @@ export class UploadController {
         assignedTo: req.body.assignedTo || userId
       }, userId);
 
-      // Create data in process records
-      await DataInProcessService.bulkCreate(
-        uniqueRows.map(row => ({
-          ...row,
-          price: row.price ? parseFloat(row.price) : undefined,
-          uploadTaskId: uploadTask.id
-        }))
-      );
+      // Create data in process records (only for truly new domains)
+      if (uniqueRows.length > 0) {
+        await DataInProcessService.bulkCreate(
+          uniqueRows.map(row => ({
+            ...row,
+            price: row.price ? parseFloat(row.price) : undefined,
+            uploadTaskId: uploadTask.id
+          }))
+        );
+      }
+
+      // Update existing records in current system with lower prices
+      if (rowsToUpdateInCurrentSystem.length > 0) {
+        for (const update of rowsToUpdateInCurrentSystem) {
+          if (update.source === 'data_in_process') {
+            await prisma.dataInProcess.update({
+              where: { id: update.id },
+              data: { price: update.price }
+            });
+          } else if (update.source === 'data_final') {
+            await prisma.dataFinal.update({
+              where: { id: update.id },
+              data: { gbBasePrice: update.price }
+            });
+          }
+        }
+      }
 
       // Update task with duplicate count
       await UploadTaskService.update(uploadTask.id, {
         duplicateRecords: duplicateCheck.duplicateCount,
-        processedRecords: uniqueRows.length
+        processedRecords: uniqueRows.length + rowsToUpdateInCurrentSystem.length
       });
 
       // Log activity
@@ -215,13 +404,17 @@ export class UploadController {
             duplicatesInCSV: duplicatesInCSV.length,
             duplicatesInSystem: duplicateCheck.duplicateCount,
             duplicatesInMainProject: duplicatesInMainProject,
-            duplicatesInCurrentSystem: duplicatesInCurrentSystem
+            duplicatesInCurrentSystem: duplicatesInCurrentSystem,
+            priceSkipped: priceSkippedDomains.length,
+            priceUpdates: priceUpdatedDomains.length
           },
           newDomains: newDomains,
           invalidRows: parsedData.invalidRows,
           duplicateDomains: duplicateDomainsWithSource.map(d => d.domain),
           duplicateDetails: duplicateDomainsWithSource,
-          csvDuplicates: duplicatesInCSV
+          csvDuplicates: duplicatesInCSV,
+          priceSkippedDomains: priceSkippedDomains,
+          priceUpdatedDomains: priceUpdatedDomains
         }
       });
     } catch (error) {
@@ -231,7 +424,7 @@ export class UploadController {
   }
 
   /**
-   * Download CSV template
+   * Download CSV template (basic)
    */
   static downloadTemplate(_req: AuthRequest, res: Response, next: NextFunction) {
     try {
@@ -239,6 +432,21 @@ export class UploadController {
       
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', 'attachment; filename=guest_blog_template.csv');
+      res.send(template);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Download CSV template with price column
+   */
+  static downloadTemplateWithPrice(_req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const template = CSVParserService.generateTemplateWithPrice();
+      
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename=guest_blog_template_with_price.csv');
       res.send(template);
     } catch (error) {
       next(error);

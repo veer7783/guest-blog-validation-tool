@@ -2,6 +2,7 @@ import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../types';
 import { DataInProcessService } from '../services/dataInProcess.service';
 import { DataInProcessUpdateRequest, PushToMainProjectRequest } from '../types/upload.types';
+import { ActivityLogService } from '../services/activityLog.service';
 
 export class DataInProcessController {
   /**
@@ -61,6 +62,17 @@ export class DataInProcessController {
 
       const updated = await DataInProcessService.update(id, updateData, userId);
 
+      // Log activity with IP and user agent
+      const movedToFinal = 'movedToDataFinal' in updated && updated.movedToDataFinal;
+      await ActivityLogService.logFromRequest(
+        req,
+        userId,
+        movedToFinal ? 'DATA_MARKED_AS_REACHED' : 'DATA_IN_PROCESS_UPDATED',
+        'DataInProcess',
+        id,
+        { websiteUrl: updated.websiteUrl, changes: updateData, movedToDataFinal: movedToFinal }
+      );
+
       res.status(200).json({
         success: true,
         message: 'Data updated successfully',
@@ -111,9 +123,67 @@ export class DataInProcessController {
 
       const result = await DataInProcessService.delete(id, userId);
 
+      // Log activity with IP and user agent
+      await ActivityLogService.logFromRequest(
+        req,
+        userId,
+        'DATA_IN_PROCESS_DELETED',
+        'DataInProcess',
+        id,
+        null
+      );
+
       res.status(200).json({
         success: true,
         message: result.message
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Bulk delete data in process (Super Admin only)
+   */
+  static async bulkDelete(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { ids } = req.body;
+      const userId = req.user!.id;
+      const userRole = req.user!.role;
+
+      // Only Super Admin can delete
+      if (userRole !== 'SUPER_ADMIN') {
+        res.status(403).json({
+          success: false,
+          message: 'Only Super Admin can delete records'
+        });
+        return;
+      }
+
+      if (!ids || !Array.isArray(ids) || ids.length === 0) {
+        res.status(400).json({
+          success: false,
+          message: 'Please provide an array of record IDs to delete'
+        });
+        return;
+      }
+
+      const result = await DataInProcessService.bulkDelete(ids, userId);
+
+      // Log activity with IP and user agent
+      await ActivityLogService.logFromRequest(
+        req,
+        userId,
+        'DATA_IN_PROCESS_BULK_DELETED',
+        'DataInProcess',
+        null,
+        { count: result.count, ids }
+      );
+
+      res.status(200).json({
+        success: true,
+        message: result.message,
+        data: { deletedCount: result.count }
       });
     } catch (error) {
       next(error);

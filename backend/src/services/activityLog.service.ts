@@ -1,7 +1,27 @@
 import prisma from '../config/database';
 import { ActivityLogDetails } from '../types';
+import { Request } from 'express';
 
 export class ActivityLogService {
+  /**
+   * Extract IP address from request
+   */
+  static getClientIP(req: Request): string {
+    const forwarded = req.headers['x-forwarded-for'];
+    if (forwarded) {
+      const ips = typeof forwarded === 'string' ? forwarded : forwarded[0];
+      return ips.split(',')[0].trim();
+    }
+    return req.socket?.remoteAddress || req.ip || 'unknown';
+  }
+
+  /**
+   * Extract user agent from request
+   */
+  static getUserAgent(req: Request): string {
+    return req.headers['user-agent'] || 'unknown';
+  }
+
   /**
    * Create activity log
    */
@@ -31,6 +51,22 @@ export class ActivityLogService {
       // Don't throw error - logging should not break the main flow
       return null;
     }
+  }
+
+  /**
+   * Create activity log from request (convenience method)
+   */
+  static async logFromRequest(
+    req: Request,
+    userId: string,
+    action: string,
+    entityType: string,
+    entityId: string | null,
+    details: ActivityLogDetails | null
+  ) {
+    const ipAddress = this.getClientIP(req);
+    const userAgent = this.getUserAgent(req);
+    return this.createLog(userId, action, entityType, entityId, details, ipAddress, userAgent);
   }
 
   /**

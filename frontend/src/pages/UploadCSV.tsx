@@ -47,6 +47,8 @@ interface UploadResult {
     duplicatesInSystem?: number;
     duplicatesInMainProject?: number;
     duplicatesInCurrentSystem?: number;
+    priceSkipped?: number;
+    priceUpdates?: number;
   };
   invalidRows?: Array<{
     row: number;
@@ -60,6 +62,17 @@ interface UploadResult {
   }>;
   csvDuplicates?: string[];
   newDomains?: string[];
+  priceSkippedDomains?: Array<{
+    domain: string;
+    reason: string;
+    currentPrice?: number;
+    newPrice?: number;
+  }>;
+  priceUpdatedDomains?: Array<{
+    domain: string;
+    currentPrice: number;
+    newPrice: number;
+  }>;
 }
 
 interface User {
@@ -80,6 +93,7 @@ const UploadCSV: React.FC = () => {
   const [showDuplicatesDialog, setShowDuplicatesDialog] = useState(false);
   const [showNewDomainsDialog, setShowNewDomainsDialog] = useState(false);
   const [showInvalidDialog, setShowInvalidDialog] = useState(false);
+  const [showPriceUpdatesDialog, setShowPriceUpdatesDialog] = useState(false);
   const [users, setUsers] = useState<User[]>([]);
   const [assignedTo, setAssignedTo] = useState<string>('');
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -117,13 +131,20 @@ const UploadCSV: React.FC = () => {
     fetchUsers();
   }, []);
 
-  const handleDownloadTemplate = async () => {
+  const handleDownloadTemplate = async (withPrice: boolean = false) => {
     setDownloading(true);
     setError('');
     
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.get('http://localhost:5000/api/upload/template', {
+      const endpoint = withPrice 
+        ? 'http://localhost:5000/api/upload/template-with-price'
+        : 'http://localhost:5000/api/upload/template';
+      const filename = withPrice 
+        ? 'guest_blog_template_with_price.csv'
+        : 'guest_blog_template.csv';
+        
+      const response = await axios.get(endpoint, {
         headers: {
           Authorization: `Bearer ${token}`
         },
@@ -133,7 +154,7 @@ const UploadCSV: React.FC = () => {
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', 'guest_blog_template.csv');
+      link.setAttribute('download', filename);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -236,7 +257,29 @@ const UploadCSV: React.FC = () => {
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>
-          {error}
+          <Box>
+            <Typography variant="body2">{error}</Typography>
+            {/* Show duplicate domain names when all domains are duplicates */}
+            {error.includes('All domains are duplicates') && uploadResult?.duplicateDomains && uploadResult.duplicateDomains.length > 0 && (
+              <Box sx={{ mt: 1 }}>
+                <Typography variant="caption" sx={{ fontWeight: 'bold' }}>
+                  Duplicate sites:
+                </Typography>
+                <Typography variant="caption" sx={{ display: 'block', fontStyle: 'italic' }}>
+                  {uploadResult.duplicateDomains.slice(0, 3).join(', ')}
+                  {uploadResult.duplicateDomains.length > 3 && (
+                    <Chip
+                      label={`+${uploadResult.duplicateDomains.length - 3} more`}
+                      size="small"
+                      color="error"
+                      onClick={() => setShowDuplicatesDialog(true)}
+                      sx={{ cursor: 'pointer', fontSize: '0.7rem', ml: 1, height: '20px' }}
+                    />
+                  )}
+                </Typography>
+              </Box>
+            )}
+          </Box>
         </Alert>
       )}
 
@@ -281,52 +324,107 @@ const UploadCSV: React.FC = () => {
               )}
             </Box>
             
-            {uploadResult.summary.duplicateRows > 0 && (
+            {/* Price Updates Section - Show when sites will be updated with lower prices */}
+            {uploadResult.summary.priceUpdates && uploadResult.summary.priceUpdates > 0 && (
               <Box sx={{ mb: 1 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Typography variant="body1" sx={{ color: 'warning.main' }}>
-                    ⏭️ <strong>Skipped (Duplicates):</strong> {uploadResult.summary.duplicateRows}
+                  <Typography variant="body1" sx={{ color: 'info.main' }}>
+                    💰 <strong>Price Updates:</strong> {uploadResult.summary.priceUpdates}
                   </Typography>
-                  {uploadResult.duplicateDomains && uploadResult.duplicateDomains.length > 5 && (
+                  {uploadResult.priceUpdatedDomains && uploadResult.priceUpdatedDomains.length > 3 && (
                     <Chip 
-                      label={`+${uploadResult.duplicateDomains.length - 5} more`}
+                      label={`View all ${uploadResult.priceUpdatedDomains.length}`}
                       size="small"
-                      color="warning"
-                      onClick={() => setShowDuplicatesDialog(true)}
+                      color="info"
+                      onClick={() => setShowPriceUpdatesDialog(true)}
                       sx={{ cursor: 'pointer', fontSize: '0.75rem' }}
                     />
                   )}
                 </Box>
-                
-                {/* Show CSV duplicates */}
-                {uploadResult.summary.duplicatesInCSV && uploadResult.summary.duplicatesInCSV > 0 && (
-                  <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', ml: 3, mt: 0.5 }}>
-                    • {uploadResult.summary.duplicatesInCSV} duplicate(s) within CSV file
-                  </Typography>
-                )}
-                
-                {/* Show Main Project duplicates */}
-                {uploadResult.summary.duplicatesInMainProject && uploadResult.summary.duplicatesInMainProject > 0 && (
-                  <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', ml: 3, mt: 0.5 }}>
-                    • {uploadResult.summary.duplicatesInMainProject} already exist in Link Management App
-                  </Typography>
-                )}
-                
-                {/* Show Current System duplicates */}
-                {uploadResult.summary.duplicatesInCurrentSystem && uploadResult.summary.duplicatesInCurrentSystem > 0 && (
-                  <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', ml: 3, mt: 0.5 }}>
-                    • {uploadResult.summary.duplicatesInCurrentSystem} already exist in current project
-                  </Typography>
-                )}
-                
-                {uploadResult.duplicateDomains && uploadResult.duplicateDomains.length > 0 && (
-                  <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', ml: 3, fontStyle: 'italic', mt: 1 }}>
-                    {uploadResult.duplicateDomains.slice(0, 5).join(', ')}
-                    {uploadResult.duplicateDomains.length > 5 && '...'}
-                  </Typography>
+                <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', ml: 3, mt: 0.5 }}>
+                  {uploadResult.summary.priceUpdates} site(s) already exist but found with lower price - will be processed for update
+                </Typography>
+                {uploadResult.priceUpdatedDomains && uploadResult.priceUpdatedDomains.length > 0 && (
+                  <Box sx={{ ml: 3, mt: 0.5 }}>
+                    {uploadResult.priceUpdatedDomains.slice(0, 3).map((d, idx) => (
+                      <Typography key={idx} variant="caption" sx={{ color: 'info.main', display: 'block', fontStyle: 'italic' }}>
+                        • {d.domain} (${d.currentPrice} → ${d.newPrice})
+                      </Typography>
+                    ))}
+                    {uploadResult.priceUpdatedDomains.length > 3 && (
+                      <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', fontStyle: 'italic' }}>
+                        ... and {uploadResult.priceUpdatedDomains.length - 3} more
+                      </Typography>
+                    )}
+                  </Box>
                 )}
               </Box>
             )}
+
+            {/* Skipped Section - Show only actual skipped items (not price updates) */}
+            {(() => {
+              // Calculate actual skipped count
+              // priceSkipped = sites with same or higher price (already counted separately)
+              // duplicatesInCSV = duplicates within the CSV file
+              // duplicatesInCurrentSystem = duplicates in validation tool's own database
+              // duplicatesInMainProject without price check = true duplicates (no price in CSV)
+              const actualSkipped = (uploadResult.summary.duplicatesInCSV || 0) + 
+                (uploadResult.summary.duplicatesInCurrentSystem || 0) + 
+                (uploadResult.summary.priceSkipped || 0);
+              
+              if (actualSkipped <= 0) return null;
+              
+              return (
+                <Box sx={{ mb: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography variant="body1" sx={{ color: 'warning.main' }}>
+                      ⏭️ <strong>Skipped:</strong> {actualSkipped}
+                    </Typography>
+                    {uploadResult.duplicateDomains && uploadResult.duplicateDomains.length > 5 && (
+                      <Chip 
+                        label={`+${uploadResult.duplicateDomains.length - 5} more`}
+                        size="small"
+                        color="warning"
+                        onClick={() => setShowDuplicatesDialog(true)}
+                        sx={{ cursor: 'pointer', fontSize: '0.75rem' }}
+                      />
+                    )}
+                  </Box>
+                  
+                  {/* Show CSV duplicates */}
+                  {uploadResult.summary.duplicatesInCSV && uploadResult.summary.duplicatesInCSV > 0 && (
+                    <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', ml: 3, mt: 0.5 }}>
+                      • {uploadResult.summary.duplicatesInCSV} duplicate(s) within CSV file
+                    </Typography>
+                  )}
+                  
+                  {/* Show Current System duplicates */}
+                  {uploadResult.summary.duplicatesInCurrentSystem && uploadResult.summary.duplicatesInCurrentSystem > 0 && (
+                    <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', ml: 3, mt: 0.5 }}>
+                      • {uploadResult.summary.duplicatesInCurrentSystem} already exist in current project
+                    </Typography>
+                  )}
+
+                  {/* Show price-skipped domains */}
+                  {uploadResult.summary.priceSkipped && uploadResult.summary.priceSkipped > 0 && (
+                    <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', ml: 3, mt: 0.5 }}>
+                      • {uploadResult.summary.priceSkipped} skipped (price same or higher than existing)
+                    </Typography>
+                  )}
+                  
+                  {/* Show skipped domain names */}
+                  {uploadResult.priceSkippedDomains && uploadResult.priceSkippedDomains.length > 0 && (
+                    <Box sx={{ ml: 3, mt: 0.5 }}>
+                      {uploadResult.priceSkippedDomains.slice(0, 3).map((d, idx) => (
+                        <Typography key={idx} variant="caption" sx={{ color: 'text.secondary', display: 'block', fontStyle: 'italic' }}>
+                          • {d.domain} ({d.reason})
+                        </Typography>
+                      ))}
+                    </Box>
+                  )}
+                </Box>
+              );
+            })()}
             
             {uploadResult.summary.invalidRows > 0 && (
               <Box>
@@ -437,15 +535,25 @@ const UploadCSV: React.FC = () => {
             </Box>
           )}
 
-          <Box sx={{ mt: 3, textAlign: 'center' }}>
+          <Box sx={{ mt: 3, textAlign: 'center', display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap' }}>
             <Button
               variant="outlined"
               startIcon={downloading ? <CircularProgress size={16} /> : <DownloadIcon />}
               size="small"
-              onClick={handleDownloadTemplate}
+              onClick={() => handleDownloadTemplate(false)}
               disabled={downloading}
             >
-              {downloading ? 'Downloading...' : 'Download CSV Template'}
+              {downloading ? 'Downloading...' : 'Download Template (Site Only)'}
+            </Button>
+            <Button
+              variant="contained"
+              color="secondary"
+              startIcon={downloading ? <CircularProgress size={16} /> : <DownloadIcon />}
+              size="small"
+              onClick={() => handleDownloadTemplate(true)}
+              disabled={downloading}
+            >
+              {downloading ? 'Downloading...' : 'Download Template (With Price)'}
             </Button>
           </Box>
         </CardContent>
@@ -507,6 +615,29 @@ const UploadCSV: React.FC = () => {
                       secondaryTypographyProps={{
                         variant: 'caption',
                         color: 'text.secondary'
+                      }}
+                    />
+                  </ListItem>
+                ))}
+              </List>
+            </Box>
+          )}
+
+          {/* Fallback: Show duplicateDomains if no detailed info available */}
+          {uploadResult?.duplicateDomains && uploadResult.duplicateDomains.length > 0 && 
+           !uploadResult?.duplicateDetails?.length && !uploadResult?.csvDuplicates?.length && (
+            <Box>
+              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold', color: 'warning.main' }}>
+                🔄 Duplicate Domains ({uploadResult.duplicateDomains.length})
+              </Typography>
+              <List dense>
+                {uploadResult.duplicateDomains.map((domain, index) => (
+                  <ListItem key={`dup-${index}`} sx={{ py: 0.5, pl: 3 }}>
+                    <ListItemText 
+                      primary={domain}
+                      primaryTypographyProps={{ 
+                        variant: 'body2',
+                        sx: { fontFamily: 'monospace' }
                       }}
                     />
                   </ListItem>
@@ -595,6 +726,55 @@ const UploadCSV: React.FC = () => {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setShowInvalidDialog(false)} color="primary">
+            Close
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Price Updates Dialog */}
+      <Dialog 
+        open={showPriceUpdatesDialog} 
+        onClose={() => setShowPriceUpdatesDialog(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle sx={{ bgcolor: 'info.light', color: 'info.contrastText' }}>
+          💰 Price Updates - Lower Prices Found
+        </DialogTitle>
+        <DialogContent sx={{ mt: 2 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            These sites already exist in the system but were found with lower prices. They will be processed for price update:
+          </Typography>
+          <List dense>
+            {uploadResult?.priceUpdatedDomains?.map((item, index) => (
+              <ListItem key={index} sx={{ py: 1, borderBottom: '1px solid #eee' }}>
+                <ListItemText 
+                  primary={item.domain}
+                  secondary={
+                    <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Typography component="span" variant="caption" sx={{ color: 'text.secondary' }}>
+                        Current: <strong>${item.currentPrice}</strong>
+                      </Typography>
+                      <Typography component="span" variant="caption">→</Typography>
+                      <Typography component="span" variant="caption" sx={{ color: 'success.main' }}>
+                        New: <strong>${item.newPrice}</strong>
+                      </Typography>
+                      <Typography component="span" variant="caption" sx={{ color: 'success.main', ml: 1 }}>
+                        (Save ${item.currentPrice - item.newPrice})
+                      </Typography>
+                    </Box>
+                  }
+                  primaryTypographyProps={{ 
+                    variant: 'body2',
+                    sx: { fontFamily: 'monospace', fontWeight: 'bold' }
+                  }}
+                />
+              </ListItem>
+            ))}
+          </List>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowPriceUpdatesDialog(false)} color="primary">
             Close
           </Button>
         </DialogActions>

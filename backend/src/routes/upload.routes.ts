@@ -10,8 +10,11 @@ const router = Router();
 // All routes require authentication
 router.use(authenticate);
 
-// Download CSV template (no auth required after login)
+// Download CSV template (basic - Site only)
 router.get('/template', UploadController.downloadTemplate);
+
+// Download CSV template with price column
+router.get('/template-with-price', UploadController.downloadTemplateWithPrice);
 
 // Upload CSV (Super Admin only, with rate limiting)
 router.post(

@@ -48,9 +48,21 @@ export class CSVParserService {
               errors
             });
           } else {
-            // Only store the normalized domain - other fields will be filled later by Admin
+            // Extract price if provided (GB Base Price column)
+            const priceValue = row.gb_base_price || row.price || row.base_price || row.gbbaseprice;
+            let price: number | undefined = undefined;
+            
+            if (priceValue !== undefined && priceValue !== null && priceValue !== '') {
+              const parsedPrice = parseFloat(priceValue.toString().replace(/[^0-9.]/g, ''));
+              if (!isNaN(parsedPrice) && parsedPrice >= 0) {
+                price = parsedPrice;
+              }
+            }
+
+            // Store the normalized domain and price (if provided)
             const validRow: CSVRow = {
-              websiteUrl: normalizeDomain(websiteUrl)
+              websiteUrl: normalizeDomain(websiteUrl),
+              price: price !== undefined ? price.toString() : undefined
               // All other fields (category, language, country, DA, DR, publisher info, etc.) 
               // will be empty and filled later in "Data in Process" page
             };
@@ -75,7 +87,7 @@ export class CSVParserService {
   }
 
   /**
-   * Generate CSV template
+   * Generate CSV template (basic - Site only)
    */
   static generateTemplate(): string {
     const headers = ['Site'];
@@ -84,6 +96,21 @@ export class CSVParserService {
       'https://example2.com',
       'www.example3.com',
       'http://example4.com'
+    ];
+
+    return `${headers.join(',')}\n${exampleRows.join('\n')}`;
+  }
+
+  /**
+   * Generate CSV template with price column
+   */
+  static generateTemplateWithPrice(): string {
+    const headers = ['Site', 'GB Base Price'];
+    const exampleRows = [
+      'example.com,50',
+      'https://example2.com,75',
+      'www.example3.com,100',
+      'http://example4.com,125'
     ];
 
     return `${headers.join(',')}\n${exampleRows.join('\n')}`;

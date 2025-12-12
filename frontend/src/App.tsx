@@ -6,7 +6,9 @@ import Dashboard from './pages/Dashboard';
 import UploadCSV from './pages/UploadCSV';
 import DataManagement from './pages/DataManagement';
 import DataFinal from './pages/DataFinal';
+import PushedData from './pages/PushedData';
 import Users from './pages/Users';
+import ActivityLog from './pages/ActivityLog';
 import AppLayout from './components/layout/AppLayout';
 import CircularProgress from '@mui/material/CircularProgress';
 import Box from '@mui/material/Box';
@@ -46,7 +48,9 @@ const App: React.FC = () => {
         <Route path="upload" element={<UploadCSV />} />
         <Route path="data" element={<DataManagement />} />
         <Route path="data-final" element={<DataFinal />} />
+        <Route path="pushed-data" element={<PushedData />} />
         <Route path="users" element={<Users />} />
+        <Route path="activity-log" element={<ActivityLog />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

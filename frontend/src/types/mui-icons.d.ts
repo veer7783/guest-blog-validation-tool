@@ -32,3 +32,52 @@ declare module '@mui/icons-material/Delete' {
   const DeleteIcon: ComponentType<SvgIconProps>;
   export default DeleteIcon;
 }
+
+declare module '@mui/icons-material/Search' {
+  import { SvgIconProps } from '@mui/material';
+  import { ComponentType } from 'react';
+  const SearchIcon: ComponentType<SvgIconProps>;
+  export default SearchIcon;
+}
+
+declare module '@mui/icons-material/Clear' {
+  import { SvgIconProps } from '@mui/material';
+  import { ComponentType } from 'react';
+  const ClearIcon: ComponentType<SvgIconProps>;
+  export default ClearIcon;
+}
+
+declare module '@mui/icons-material/Refresh' {
+  import { SvgIconProps } from '@mui/material';
+  import { ComponentType } from 'react';
+  const RefreshIcon: ComponentType<SvgIconProps>;
+  export default RefreshIcon;
+}
+
+declare module '@mui/icons-material/FilterList' {
+  import { SvgIconProps } from '@mui/material';
+  import { ComponentType } from 'react';
+  const FilterListIcon: ComponentType<SvgIconProps>;
+  export default FilterListIcon;
+}
+
+declare module '@mui/icons-material/ExpandMore' {
+  import { SvgIconProps } from '@mui/material';
+  import { ComponentType } from 'react';
+  const ExpandMoreIcon: ComponentType<SvgIconProps>;
+  export default ExpandMoreIcon;
+}
+
+declare module '@mui/icons-material/ExpandLess' {
+  import { SvgIconProps } from '@mui/material';
+  import { ComponentType } from 'react';
+  const ExpandLessIcon: ComponentType<SvgIconProps>;
+  export default ExpandLessIcon;
+}
+
+declare module '@mui/icons-material/History' {
+  import { SvgIconProps } from '@mui/material';
+  import { ComponentType } from 'react';
+  const HistoryIcon: ComponentType<SvgIconProps>;
+  export default HistoryIcon;
+}

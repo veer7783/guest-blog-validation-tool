@@ -16,9 +16,10 @@ import {
   Dashboard as DashboardIcon,
   CloudUpload as UploadIcon,
   Storage as DataIcon,
-  CheckCircle as DataFinalIcon,
+  CheckCircle,
   People as PeopleIcon,
 } from '@mui/icons-material';
+import HistoryIcon from '@mui/icons-material/History';
 import { useAuth } from '../../contexts/AuthContext';
 
 interface SidebarProps {
@@ -36,8 +37,10 @@ const Sidebar: React.FC<SidebarProps> = ({ drawerWidth, mobileOpen, handleDrawer
     { text: 'Dashboard', icon: <DashboardIcon />, path: '/', roles: ['ADMIN', 'SUPER_ADMIN'] },
     { text: 'Upload CSV', icon: <UploadIcon />, path: '/upload', roles: ['SUPER_ADMIN'] },
     { text: 'Data Management', icon: <DataIcon />, path: '/data', roles: ['ADMIN', 'SUPER_ADMIN'] },
-    { text: 'Data Final', icon: <DataFinalIcon />, path: '/data-final', roles: ['SUPER_ADMIN'] },
+    { text: 'Data Final', icon: <DataIcon />, path: '/data-final', roles: ['SUPER_ADMIN'] },
+    { text: 'Pushed Data', icon: <CheckCircle />, path: '/pushed-data', roles: ['SUPER_ADMIN'] },
     { text: 'Users', icon: <PeopleIcon />, path: '/users', roles: ['SUPER_ADMIN'] },
+    { text: 'Activity Log', icon: <HistoryIcon />, path: '/activity-log', roles: ['SUPER_ADMIN'] },
   ];
 
   const filteredMenuItems = menuItems.filter((item) =>

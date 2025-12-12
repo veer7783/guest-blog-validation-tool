@@ -112,6 +112,7 @@ export class MainProjectAPIService {
     websiteUrl: string;
     isDuplicate: boolean;
     existingId?: string;
+    existingPrice?: number | null;
   }>> {
     try {
       const normalizedUrls = websiteUrls.map(url => normalizeDomain(url));
@@ -135,6 +136,11 @@ export class MainProjectAPIService {
       if (response.data.success && response.data.data) {
         const data = response.data.data;
         
+        console.log('=== DUPLICATE CHECK RESPONSE ===');
+        console.log('existingDomains:', data.existingDomains);
+        console.log('existingSites:', JSON.stringify(data.existingSites, null, 2));
+        console.log('================================');
+        
         // Map response back to original normalized URLs
         return normalizedUrls.map(url => {
           // Check if any variation of this URL is in existingDomains
@@ -147,10 +153,13 @@ export class MainProjectAPIService {
             normalizeDomain(site.site_url) === url
           );
           
+          console.log(`URL: ${url}, isDuplicate: ${isDuplicate}, existingSite: ${JSON.stringify(existingSite)}`);
+          
           return {
             websiteUrl: url,
             isDuplicate: isDuplicate || !!existingSite,
-            existingId: existingSite?.id
+            existingId: existingSite?.id,
+            existingPrice: existingSite?.base_price ?? null
           };
         });
       }
@@ -230,41 +239,67 @@ export class MainProjectAPIService {
     ss?: number;
     gbBasePrice?: number;
     liBasePrice?: number;
+    status?: string;
+    negotiationStatus?: string;
   }>): Promise<PushToMainProjectResponse> {
     try {
       const axiosInstance = await this.getAxiosInstance();
       // Map data to main project format
       const sites = data.map(site => ({
         site_url: site.websiteUrl,
-        category: site.category,
-        language: site.language,
-        country: site.country,
+        publisher_email: site.publisherEmail,
+        publisher_name: site.publisherName,
         da: site.da || 0,
         dr: site.dr || 0,
         ahrefs_traffic: site.traffic || 0,
-        ss: site.ss || 0,
-        tat: site.tat,
-        base_price: site.gbBasePrice || site.price || 0,
+        ss: site.ss,
+        category: site.category || 'GENERAL',
+        country: site.country || 'US',
+        site_language: site.language || 'en',
+        tat: site.tat || '3-5 days',
+        base_price: site.gbBasePrice || 0,
         li_base_price: site.liBasePrice,
-        publisher_name: site.publisherName,
-        publisher_email: site.publisherEmail,
-        status: 'ACTIVE',
-        negotiation_status: 'DONE'
+        status: site.status || 'ACTIVE',
+        negotiation_status: site.negotiationStatus || 'DONE'
       }));
+      
+      console.log('Sending to main project:', sites.length, 'sites');
       
       const response = await axiosInstance.post<MainProjectAPIResponse>(
         '/bulk-import',
-        { sites, autoCreatePublisher: true }
+        { 
+          sites, 
+          autoCreatePublisher: true,
+          source: 'validation-tool'
+        }
       );
 
+      console.log('Main project response:', JSON.stringify(response.data, null, 2));
+
       if (response.data.success && response.data.data) {
+        const responseData = response.data.data;
+        console.log('Response data summary:', JSON.stringify(responseData.summary, null, 2));
+        console.log('Success array:', JSON.stringify(responseData.success, null, 2));
+        
+        // Use summary counts from main project response, fallback to array lengths
+        const successArray = responseData.success || [];
+        const errorArray = responseData.errors || [];
+        
+        const successCount = responseData.summary?.successful || successArray.length;
+        const errorCount = responseData.summary?.errors || errorArray.length;
+        
+        console.log('Calculated successCount:', successCount);
+        console.log('Calculated errorCount:', errorCount);
+        
         return {
           success: true,
-          pushedCount: response.data.data.successCount || 0,
-          failedCount: response.data.data.failedCount || 0,
-          results: response.data.data.results || []
+          pushedCount: successCount,
+          failedCount: errorCount,
+          results: successArray
         };
       }
+
+      console.log('Main project API returned non-success response');
 
       return {
         success: false,
@@ -288,6 +323,315 @@ export class MainProjectAPIService {
           error: error.message
         }))
       };
+    }
+  }
+
+  /**
+   * Check prices for sites in main project (compares against base_price)
+   * If new price < existing base_price -> UPDATE (proceed)
+   * If new price >= existing base_price -> SKIP
+   */
+  static async checkPrices(sites: Array<{ site_url: string; new_price: number }>): Promise<{
+    success: boolean;
+    results: Array<{
+      site_url: string;
+      exists: boolean;
+      current_price?: number;
+      new_price: number;
+      action: 'CREATE' | 'UPDATE' | 'SKIP_SAME' | 'SKIP_HIGHER';
+      existing_id?: string;
+      price_difference?: number;
+    }>;
+    summary: {
+      total: number;
+      toCreate: number;
+      toUpdate: number;
+      skipSamePrice: number;
+      skipHigherPrice: number;
+    };
+    error?: string;
+  }> {
+    try {
+      const axiosInstance = await this.getAxiosInstance();
+      
+      // Use the /check-prices endpoint from main tool
+      // Send sites with base_price (main tool expects this field name)
+      const sitesForApi = sites.map(s => ({
+        site_url: s.site_url,
+        base_price: s.new_price
+      }));
+      
+      const response = await axiosInstance.post<MainProjectAPIResponse>(
+        '/check-prices',
+        { sites: sitesForApi }
+      );
+
+      if (response.data.success && response.data.data) {
+        const apiResults = response.data.data.results || [];
+        const apiSummary = response.data.data.summary || {};
+        
+        // Map API response to our format
+        const results = apiResults.map((r: any) => ({
+          site_url: r.site_url,
+          exists: r.exists,
+          current_price: r.current_price,
+          new_price: r.new_price,
+          action: r.action === 'SKIP_SAME_PRICE' ? 'SKIP_SAME' as const : 
+                  r.action === 'SKIP_HIGHER_PRICE' ? 'SKIP_HIGHER' as const :
+                  r.action as 'CREATE' | 'UPDATE' | 'SKIP_SAME' | 'SKIP_HIGHER',
+          existing_id: r.existing_site_id,
+          price_difference: r.price_difference
+        }));
+
+        return {
+          success: true,
+          results,
+          summary: {
+            total: apiSummary.total || sites.length,
+            toCreate: apiSummary.toCreate || 0,
+            toUpdate: apiSummary.toUpdate || 0,
+            skipSamePrice: apiSummary.skipSamePrice || 0,
+            skipHigherPrice: apiSummary.skipHigherPrice || 0
+          }
+        };
+      }
+
+      return {
+        success: false,
+        results: [],
+        summary: { total: 0, toCreate: 0, toUpdate: 0, skipSamePrice: 0, skipHigherPrice: 0 },
+        error: 'Invalid response from main project'
+      };
+    } catch (error: any) {
+      console.error('Main project check prices error:', error.message);
+      return {
+        success: false,
+        results: [],
+        summary: { total: 0, toCreate: 0, toUpdate: 0, skipSamePrice: 0, skipHigherPrice: 0 },
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Submit sites for approval (instead of direct import)
+   */
+  static async submitForApproval(data: Array<{
+    websiteUrl: string;
+    category?: string;
+    language?: string;
+    country?: string;
+    da?: number;
+    dr?: number;
+    traffic?: number;
+    ss?: number;
+    gbBasePrice?: number;
+    liBasePrice?: number;
+    tat?: string;
+    publisherName?: string;
+    publisherEmail?: string;
+    status?: string;
+    negotiationStatus?: string;
+  }>): Promise<{
+    success: boolean;
+    submitted: number;
+    skipped: number;
+    errors: number;
+    details: {
+      submitted: Array<{ site_url: string; action_type: string; old_price?: number; new_price?: number }>;
+      skipped: Array<{ site_url: string; reason: string }>;
+      errors: Array<{ site_url: string; reason: string }>;
+    };
+  }> {
+    try {
+      const axiosInstance = await this.getAxiosInstance();
+      
+      // Map data to main project format
+      const sites = data.map(site => ({
+        site_url: site.websiteUrl,
+        publisher_email: site.publisherEmail,
+        publisher_name: site.publisherName,
+        da: site.da || 0,
+        dr: site.dr || 0,
+        ahrefs_traffic: site.traffic || 0,
+        ss: site.ss,
+        category: site.category || 'GENERAL',
+        country: site.country || 'US',
+        site_language: site.language || 'en',
+        tat: site.tat || '3-5 days',
+        base_price: site.gbBasePrice || 0,
+        li_base_price: site.liBasePrice,
+        status: site.status || 'ACTIVE',
+        negotiation_status: site.negotiationStatus || 'DONE'
+      }));
+
+      // console.log('Submitting for approval:', sites.length, 'sites');
+      // console.log('=== DATA BEING SENT TO MAIN TOOL ===');
+      // console.log('Sample INPUT data (before mapping):', JSON.stringify(data[0], null, 2));
+      // console.log('Sample OUTPUT data (after mapping):', JSON.stringify(sites[0], null, 2));
+      // console.log('Fields check - DA:', sites[0]?.da, 'DR:', sites[0]?.dr, 'Traffic:', sites[0]?.ahrefs_traffic);
+      // console.log('Fields check - SS:', sites[0]?.ss, 'TAT:', sites[0]?.tat);
+      // console.log('Fields check - Country:', sites[0]?.country, 'Language:', sites[0]?.site_language);
+      // console.log('=====================================');
+
+      const response = await axiosInstance.post<MainProjectAPIResponse>(
+        '/submit-for-approval',
+        { sites, source: 'validation-tool' }
+      );
+
+      console.log('Submit for approval response:', JSON.stringify(response.data, null, 2));
+
+      if (response.data.success && response.data.data) {
+        const responseData = response.data.data;
+        const summary = response.data.summary || {};
+
+        // Log skipped sites with reasons
+        if (responseData.skipped && responseData.skipped.length > 0) {
+          console.log('=== SKIPPED SITES ===');
+          responseData.skipped.forEach((s: any) => {
+            console.log(`  - ${s.site_url}: ${s.reason}`);
+          });
+          console.log('=====================');
+        }
+
+        return {
+          success: true,
+          submitted: summary.submitted || responseData.submitted?.length || 0,
+          skipped: summary.skipped || responseData.skipped?.length || 0,
+          errors: summary.errors || responseData.errors?.length || 0,
+          details: {
+            submitted: responseData.submitted || [],
+            skipped: responseData.skipped || [],
+            errors: responseData.errors || []
+          }
+        };
+      }
+
+      return {
+        success: false,
+        submitted: 0,
+        skipped: 0,
+        errors: data.length,
+        details: { submitted: [], skipped: [], errors: [] }
+      };
+    } catch (error: any) {
+      console.error('Main project submit for approval error:', error.message);
+      return {
+        success: false,
+        submitted: 0,
+        skipped: 0,
+        errors: data.length,
+        details: { submitted: [], skipped: [], errors: [{ site_url: 'all', reason: error.message }] }
+      };
+    }
+  }
+
+  /**
+   * Fetch all publishers from main project
+   */
+  static async fetchPublishers(): Promise<{
+    success: boolean;
+    publishers: Array<{
+      id: string;
+      email: string | null;
+      publisherName: string;
+      modeOfCommunication?: string;
+    }>;
+    error?: string;
+  }> {
+    try {
+      const axiosInstance = await this.getAxiosInstance();
+      const response = await axiosInstance.get<MainProjectAPIResponse>('/publishers');
+
+      if (response.data.success && response.data.data) {
+        return {
+          success: true,
+          publishers: response.data.data.publishers || []
+        };
+      }
+
+      return {
+        success: false,
+        publishers: [],
+        error: 'Invalid response from main project'
+      };
+    } catch (error: any) {
+      console.error('Main project fetch publishers error:', error.message);
+      return {
+        success: false,
+        publishers: [],
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Search publishers by email or name
+   */
+  static async searchPublishers(query: string): Promise<{
+    success: boolean;
+    publishers: Array<{
+      id: string;
+      email: string | null;
+      publisherName: string;
+    }>;
+    error?: string;
+  }> {
+    try {
+      const result = await this.fetchPublishers();
+      if (!result.success) {
+        return result;
+      }
+
+      // Filter publishers by query (email or name)
+      const lowerQuery = query.toLowerCase();
+      const filtered = result.publishers.filter(p => 
+        p.email?.toLowerCase().includes(lowerQuery) ||
+        p.publisherName?.toLowerCase().includes(lowerQuery)
+      );
+
+      return {
+        success: true,
+        publishers: filtered
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        publishers: [],
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Get publisher by email
+   */
+  static async getPublisherByEmail(email: string): Promise<{
+    success: boolean;
+    publisher?: {
+      id: string;
+      email: string | null;
+      publisherName: string;
+    };
+    error?: string;
+  }> {
+    try {
+      const result = await this.fetchPublishers();
+      if (!result.success) {
+        return { success: false, error: result.error };
+      }
+
+      const publisher = result.publishers.find(p => 
+        p.email?.toLowerCase() === email.toLowerCase()
+      );
+
+      if (publisher) {
+        return { success: true, publisher };
+      }
+
+      return { success: false, error: 'Publisher not found' };
+    } catch (error: any) {
+      return { success: false, error: error.message };
     }
   }
 

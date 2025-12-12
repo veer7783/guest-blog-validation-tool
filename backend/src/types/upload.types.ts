@@ -39,6 +39,7 @@ export interface BulkDuplicateCheckResult {
     isDuplicate: boolean;
     existingId?: string;
     source?: string;
+    existingPrice?: number | null;
   }>;
   duplicateCount: number;
   uniqueCount: number;
@@ -90,6 +91,8 @@ export interface DataInProcessUpdateRequest {
   tat?: string;
   daRange?: string;
   price?: number;
+  gbBasePrice?: number;
+  liBasePrice?: number;
   linkType?: string;
   notes?: string;
   status?: 'PENDING' | 'REACHED' | 'NOT_REACHED' | 'NO_ACTION' | 'NO_ACTION_NEEDED' | 'VERIFIED' | 'REJECTED' | 'PUSHED';
@@ -116,4 +119,11 @@ export interface MainProjectAPIResponse {
   message?: string;
   data?: any;
   error?: string;
+  summary?: {
+    total?: number;
+    submitted?: number;
+    skipped?: number;
+    errors?: number;
+    successful?: number;
+  };
 }

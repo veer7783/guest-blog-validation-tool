@@ -26,4 +26,7 @@ router.post('/push', isSuperAdmin, DataInProcessController.pushToMainProject);
 // Delete data in process (Super Admin only)
 router.delete('/:id', isSuperAdmin, DataInProcessController.delete);
 
+// Bulk delete data in process (Super Admin only)
+router.post('/bulk-delete', isSuperAdmin, DataInProcessController.bulkDelete);
+
 export default router;

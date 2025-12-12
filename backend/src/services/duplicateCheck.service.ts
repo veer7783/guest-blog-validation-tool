@@ -60,75 +60,112 @@ export class DuplicateCheckService {
       isDuplicate: boolean;
       existingId?: string;
       source?: string;
+      existingPrice?: number | null;
     }> = [];
 
     // Check in main project (bulk)
     const mainProjectDuplicates = await MainProjectAPIService.checkDuplicates(normalizedUrls);
 
-    // Check in local database
+    // Check in local database - include price for comparison
     const dataInProcessRecords = await prisma.dataInProcess.findMany({
       where: {
         websiteUrl: { in: normalizedUrls }
       },
-      select: { websiteUrl: true, id: true }
+      select: { websiteUrl: true, id: true, price: true }
     });
 
     const dataFinalRecords = await prisma.dataFinal.findMany({
       where: {
         websiteUrl: { in: normalizedUrls }
       },
-      select: { websiteUrl: true, id: true }
+      select: { websiteUrl: true, id: true, gbBasePrice: true }
     });
 
-    // Create lookup maps
-    const dataInProcessMap = new Map(
-      dataInProcessRecords.map(r => [r.websiteUrl, r.id])
-    );
-    const dataFinalMap = new Map(
-      dataFinalRecords.map(r => [r.websiteUrl, r.id])
-    );
+    // Create lookup maps with price info - keep the record with LOWEST price for each URL
+    const dataInProcessMap = new Map<string, { id: string; price: number | null }>();
+    for (const r of dataInProcessRecords) {
+      const existing = dataInProcessMap.get(r.websiteUrl);
+      // Keep the record with the lowest price (or first one if no price)
+      if (!existing || (r.price !== null && (existing.price === null || r.price < existing.price))) {
+        dataInProcessMap.set(r.websiteUrl, { id: r.id, price: r.price });
+      }
+    }
+    
+    const dataFinalMap = new Map<string, { id: string; price: number | null }>();
+    for (const r of dataFinalRecords) {
+      const existing = dataFinalMap.get(r.websiteUrl);
+      // Keep the record with the lowest price (or first one if no price)
+      if (!existing || (r.gbBasePrice !== null && (existing.price === null || r.gbBasePrice < existing.price))) {
+        dataFinalMap.set(r.websiteUrl, { id: r.id, price: r.gbBasePrice });
+      }
+    }
 
-    // Check each URL
+    // Debug logging
+    console.log('=== DUPLICATE CHECK DEBUG ===');
+    console.log('DataInProcess records found:', dataInProcessRecords.length);
+    dataInProcessRecords.forEach(r => console.log(`  - ${r.websiteUrl}: $${r.price}`));
+    console.log('DataInProcess map (lowest prices):');
+    dataInProcessMap.forEach((v, k) => console.log(`  - ${k}: $${v.price}`));
+    console.log('=============================');
+
+    // Check each URL - find the source with the LOWEST price
     for (const url of normalizedUrls) {
-      // Check main project first
       const mainProjectDup = mainProjectDuplicates.find(d => d.websiteUrl === url);
+      const dataInProcessRecord = dataInProcessMap.get(url);
+      const dataFinalRecord = dataFinalMap.get(url);
+
+      // Collect all sources where this URL exists
+      const sources: Array<{ source: string; id?: string; price: number | null }> = [];
+      
       if (mainProjectDup?.isDuplicate) {
+        sources.push({
+          source: 'main_project',
+          id: mainProjectDup.existingId,
+          price: mainProjectDup.existingPrice || null
+        });
+      }
+      
+      if (dataInProcessRecord) {
+        sources.push({
+          source: 'data_in_process',
+          id: dataInProcessRecord.id,
+          price: dataInProcessRecord.price
+        });
+      }
+      
+      if (dataFinalRecord) {
+        sources.push({
+          source: 'data_final',
+          id: dataFinalRecord.id,
+          price: dataFinalRecord.price
+        });
+      }
+
+      if (sources.length === 0) {
+        // Not a duplicate anywhere
+        duplicates.push({
+          websiteUrl: url,
+          isDuplicate: false
+        });
+      } else {
+        // Find the source with the LOWEST price (most relevant for comparison)
+        // If prices are null, treat as Infinity for comparison
+        const bestSource = sources.reduce((best, current) => {
+          const bestPrice = best.price ?? Infinity;
+          const currentPrice = current.price ?? Infinity;
+          return currentPrice < bestPrice ? current : best;
+        });
+
+        console.log(`URL ${url}: Found in ${sources.length} sources, using ${bestSource.source} with price $${bestSource.price}`);
+
         duplicates.push({
           websiteUrl: url,
           isDuplicate: true,
-          existingId: mainProjectDup.existingId,
-          source: 'main_project'
+          existingId: bestSource.id,
+          source: bestSource.source,
+          existingPrice: bestSource.price
         });
-        continue;
       }
-
-      // Check data in process
-      if (dataInProcessMap.has(url)) {
-        duplicates.push({
-          websiteUrl: url,
-          isDuplicate: true,
-          existingId: dataInProcessMap.get(url),
-          source: 'data_in_process'
-        });
-        continue;
-      }
-
-      // Check data final
-      if (dataFinalMap.has(url)) {
-        duplicates.push({
-          websiteUrl: url,
-          isDuplicate: true,
-          existingId: dataFinalMap.get(url),
-          source: 'data_final'
-        });
-        continue;
-      }
-
-      // Not a duplicate
-      duplicates.push({
-        websiteUrl: url,
-        isDuplicate: false
-      });
     }
 
     const duplicateCount = duplicates.filter(d => d.isDuplicate).length;

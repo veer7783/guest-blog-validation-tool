@@ -153,28 +153,55 @@ export class DataInProcessService {
         select: { firstName: true, lastName: true }
       });
 
-      // Create record in DataFinal
+      // Merge existing data with update data (update data takes priority)
+      // Use gbBasePrice from updateData, or fall back to price field
+      const gbPrice = updateData.gbBasePrice ?? updateData.price ?? existing.gbBasePrice ?? existing.price;
+      const liPrice = updateData.liBasePrice ?? existing.liBasePrice;
+      
+      const mergedData = {
+        websiteUrl: existing.websiteUrl,
+        category: updateData.category ?? existing.category,
+        language: updateData.language ?? existing.language,
+        country: updateData.country ?? existing.country,
+        daRange: updateData.daRange ?? existing.daRange,
+        linkType: updateData.linkType ?? existing.linkType,
+        tat: updateData.tat ?? existing.tat,
+        publisherName: updateData.publisherName ?? existing.publisherName,
+        publisherEmail: updateData.publisherEmail ?? existing.publisherEmail,
+        publisherContact: updateData.publisherContact ?? existing.publisherContact,
+        notes: updateData.notes ?? existing.notes,
+        da: updateData.da ?? existing.da,
+        dr: updateData.dr ?? existing.dr,
+        traffic: updateData.traffic ?? existing.traffic,
+        ss: updateData.ss ?? existing.ss,
+        gbBasePrice: gbPrice,
+        liBasePrice: liPrice
+      };
+
+      // Create record in DataFinal with merged data
       await prisma.dataFinal.create({
         data: {
-          websiteUrl: existing.websiteUrl,
-          category: existing.category,
-          language: existing.language,
-          country: existing.country,
-          daRange: existing.daRange,
-          linkType: existing.linkType,
-          tat: existing.tat,
-          publisherName: existing.publisherName,
-          publisherEmail: existing.publisherEmail,
-          publisherContact: existing.publisherContact,
-          notes: existing.notes,
+          websiteUrl: mergedData.websiteUrl,
+          category: mergedData.category,
+          language: mergedData.language,
+          country: mergedData.country,
+          daRange: mergedData.daRange,
+          linkType: mergedData.linkType,
+          tat: mergedData.tat,
+          publisherName: mergedData.publisherName,
+          publisherEmail: mergedData.publisherEmail,
+          publisherContact: mergedData.publisherContact,
+          notes: mergedData.notes,
           status: 'ACTIVE', // DataFinal uses SiteStatus (ACTIVE/INACTIVE)
           reachedBy: updatedBy, // Track who marked it as reached
           reachedByName: user ? `${user.firstName} ${user.lastName}` : undefined, // Track name
           reachedAt: new Date(),
-          da: existing.da,
-          dr: existing.dr,
-          traffic: existing.traffic,
-          ss: existing.ss
+          da: mergedData.da,
+          dr: mergedData.dr,
+          traffic: mergedData.traffic,
+          ss: mergedData.ss,
+          gbBasePrice: mergedData.gbBasePrice,
+          liBasePrice: mergedData.liBasePrice
         }
       });
 
@@ -232,7 +259,9 @@ export class DataInProcessService {
         language: updateData.language,
         tat: updateData.tat,
         daRange: updateData.daRange,
-        price: updateData.price,
+        price: updateData.price ?? updateData.gbBasePrice,
+        gbBasePrice: updateData.gbBasePrice ?? updateData.price,
+        liBasePrice: updateData.liBasePrice,
         linkType: updateData.linkType,
         notes: updateData.notes,
         status: updateData.status,
@@ -357,6 +386,33 @@ export class DataInProcessService {
       where: { id }
     });
 
+    // Update the task's processedRecords count
+    if (data.uploadTaskId) {
+      const task = await prisma.dataUploadTask.findUnique({
+        where: { id: data.uploadTaskId }
+      });
+      
+      if (task && task.processedRecords > 0) {
+        await prisma.dataUploadTask.update({
+          where: { id: data.uploadTaskId },
+          data: { processedRecords: task.processedRecords - 1 }
+        });
+      }
+
+      // Check if all data rows in this upload task are now deleted
+      const remainingRows = await prisma.dataInProcess.count({
+        where: { uploadTaskId: data.uploadTaskId }
+      });
+
+      // If no rows remaining, mark the upload task as COMPLETED
+      if (remainingRows === 0) {
+        await prisma.dataUploadTask.update({
+          where: { id: data.uploadTaskId },
+          data: { status: 'COMPLETED' }
+        });
+      }
+    }
+
     // Log activity
     await ActivityLogService.createLog(
       deletedBy,
@@ -369,6 +425,75 @@ export class DataInProcessService {
     );
 
     return { message: 'Data deleted successfully' };
+  }
+
+  /**
+   * Bulk delete data in process records
+   */
+  static async bulkDelete(ids: string[], deletedBy: string) {
+    // Get all records to be deleted with their task IDs
+    const records = await prisma.dataInProcess.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, uploadTaskId: true, websiteUrl: true }
+    });
+
+    if (records.length === 0) {
+      throw new AppError('No records found to delete', 404);
+    }
+
+    // Group records by uploadTaskId to update task counts
+    const taskCounts: Record<string, number> = {};
+    for (const record of records) {
+      if (record.uploadTaskId) {
+        taskCounts[record.uploadTaskId] = (taskCounts[record.uploadTaskId] || 0) + 1;
+      }
+    }
+
+    // Delete the records
+    await prisma.dataInProcess.deleteMany({
+      where: { id: { in: ids } }
+    });
+
+    // Update task processedRecords counts
+    for (const [taskId, count] of Object.entries(taskCounts)) {
+      const task = await prisma.dataUploadTask.findUnique({
+        where: { id: taskId }
+      });
+      
+      if (task) {
+        const newCount = Math.max(0, task.processedRecords - count);
+        await prisma.dataUploadTask.update({
+          where: { id: taskId },
+          data: { processedRecords: newCount }
+        });
+
+        // Check if all data rows in this upload task are now deleted
+        const remainingRows = await prisma.dataInProcess.count({
+          where: { uploadTaskId: taskId }
+        });
+
+        // If no rows remaining, mark the upload task as COMPLETED
+        if (remainingRows === 0) {
+          await prisma.dataUploadTask.update({
+            where: { id: taskId },
+            data: { status: 'COMPLETED' }
+          });
+        }
+      }
+    }
+
+    // Log activity
+    await ActivityLogService.createLog(
+      deletedBy,
+      'DATA_IN_PROCESS_BULK_DELETED',
+      'DataInProcess',
+      ids.join(','),
+      { count: records.length, websiteUrls: records.map(r => r.websiteUrl) },
+      null,
+      null
+    );
+
+    return { message: `${records.length} record(s) deleted successfully`, count: records.length };
   }
 
   /**

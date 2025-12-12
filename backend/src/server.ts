@@ -17,6 +17,7 @@ import uploadRoutes from './routes/upload.routes';
 import dataInProcessRoutes from './routes/dataInProcess.routes';
 import dataFinalRoutes from './routes/dataFinal.routes';
 import dashboardRoutes from './routes/dashboard.routes';
+import publisherRoutes from './routes/publisher.routes';
 
 // Load environment variables
 dotenv.config();
@@ -32,6 +33,7 @@ app.use(cors({
     'http://localhost:3000',
     'http://localhost:4000',
     'http://127.0.0.1:4000',
+    'https://data.usehypwave.com',
     /^http:\/\/127\.0\.0\.1:\d+$/, // Allow any 127.0.0.1 port for browser preview
     /^http:\/\/localhost:\d+$/ // Allow any localhost port
   ],
@@ -46,6 +48,25 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Apply rate limiting to all API routes
 app.use('/api', apiLimiter);
+
+// Root endpoint - API info
+app.get('/', (_req, res) => {
+  res.status(200).json({
+    success: true,
+    message: '🚀 Guest Blog Validation Tool API is running!',
+    version: '1.0.0',
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      health: '/health',
+      auth: '/api/auth',
+      users: '/api/users',
+      dataManagement: '/api/data-in-process',
+      dataFinal: '/api/data-final',
+      dashboard: '/api/dashboard'
+    }
+  });
+});
 
 // Health check endpoint
 app.get('/health', (_req, res) => {
@@ -65,6 +86,7 @@ app.use('/api/upload', uploadRoutes);
 app.use('/api/data-in-process', dataInProcessRoutes);
 app.use('/api/data-final', dataFinalRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/publishers', publisherRoutes);
 
 // Routes to be added in next phases:
 // app.use('/api/completed', completedRoutes);

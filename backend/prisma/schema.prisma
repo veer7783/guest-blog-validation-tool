@@ -101,6 +101,8 @@ model DataInProcess {
   country           String?
   daRange           String?
   price             Float?
+  gbBasePrice       Float?          // GB Base Price
+  liBasePrice       Float?          // LI Base Price
   linkType          String?
   tat               String?
   publisherName     String?

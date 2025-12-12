@@ -46,9 +46,8 @@ export const validateRegister = [
     .isLength({ min: 2 })
     .withMessage('First name must be at least 2 characters'),
   body('lastName')
+    .optional({ checkFalsy: true })
     .trim()
-    .notEmpty()
-    .withMessage('Last name is required')
     .isLength({ min: 2 })
     .withMessage('Last name must be at least 2 characters'),
   body('role')
@@ -72,9 +71,7 @@ export const validateUpdateUser = [
     .withMessage('First name must be at least 2 characters'),
   body('lastName')
     .optional()
-    .trim()
-    .isLength({ min: 2 })
-    .withMessage('Last name must be at least 2 characters'),
+    .trim(),
   body('isActive')
     .optional()
     .isBoolean()
