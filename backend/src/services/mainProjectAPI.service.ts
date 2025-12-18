@@ -245,10 +245,11 @@ export class MainProjectAPIService {
     try {
       const axiosInstance = await this.getAxiosInstance();
       // Map data to main project format
+      // Use publisherEmail if available, otherwise fall back to contactEmail
       const sites = data.map(site => ({
         site_url: site.websiteUrl,
-        publisher_email: site.publisherEmail,
-        publisher_name: site.publisherName,
+        publisher_email: site.publisherEmail || (site as any).contactEmail,
+        publisher_name: site.publisherName || (site as any).contactName,
         da: site.da || 0,
         dr: site.dr || 0,
         ahrefs_traffic: site.traffic || 0,
@@ -264,6 +265,7 @@ export class MainProjectAPIService {
       }));
       
       console.log('Sending to main project:', sites.length, 'sites');
+      console.log('Sites data:', JSON.stringify(sites, null, 2));
       
       const response = await axiosInstance.post<MainProjectAPIResponse>(
         '/bulk-import',
@@ -430,6 +432,8 @@ export class MainProjectAPIService {
     tat?: string;
     publisherName?: string;
     publisherEmail?: string;
+    contactName?: string;
+    contactEmail?: string;
     status?: string;
     negotiationStatus?: string;
   }>): Promise<{
@@ -447,10 +451,11 @@ export class MainProjectAPIService {
       const axiosInstance = await this.getAxiosInstance();
       
       // Map data to main project format
+      // Use publisherEmail if available, otherwise fall back to contactEmail
       const sites = data.map(site => ({
         site_url: site.websiteUrl,
-        publisher_email: site.publisherEmail,
-        publisher_name: site.publisherName,
+        publisher_email: site.publisherEmail || (site as any).contactEmail,
+        publisher_name: site.publisherName || (site as any).contactName,
         da: site.da || 0,
         dr: site.dr || 0,
         ahrefs_traffic: site.traffic || 0,
@@ -632,6 +637,219 @@ export class MainProjectAPIService {
       return { success: false, error: 'Publisher not found' };
     } catch (error: any) {
       return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Create a new publisher record locally
+   * Note: The main tool API doesn't have a direct endpoint to create publishers.
+   * Publishers are auto-created when sites are pushed via bulk-import with autoCreatePublisher: true.
+   * This method creates a local record that will be synced when the site is pushed.
+   */
+  static async createPublisher(publisherData: {
+    name: string;
+    email?: string;
+  }): Promise<{
+    success: boolean;
+    publisher?: {
+      id: string;
+      email: string | null;
+      publisherName: string;
+    };
+    error?: string;
+  }> {
+    try {
+      // Generate a local ID for tracking - the actual publisher will be created
+      // in the main tool when the site is pushed via bulk-import with autoCreatePublisher: true
+      const localId = `pending_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      console.log('Creating local publisher record (will sync on push):', {
+        id: localId,
+        name: publisherData.name,
+        email: publisherData.email
+      });
+      
+      return {
+        success: true,
+        publisher: {
+          id: localId,
+          email: publisherData.email || null,
+          publisherName: publisherData.name
+        }
+      };
+    } catch (error: any) {
+      console.error('Create publisher error:', error.message);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Check prices against pending sites in main project (accepted/rejected/pending)
+   * This checks the PendingSite table in the main tool
+   */
+  static async checkPricesAgainstPendingSites(sites: Array<{ site_url: string; new_price: number }>): Promise<{
+    success: boolean;
+    results: Array<{
+      site_url: string;
+      exists: boolean;
+      current_price?: number;
+      new_price: number;
+      action: 'CREATE' | 'UPDATE' | 'SKIP_SAME' | 'SKIP_HIGHER';
+      status?: string;
+    }>;
+  }> {
+    try {
+      const axiosInstance = await this.getAxiosInstance();
+      
+      // Use the /check-pending-prices endpoint from main tool
+      const sitesForApi = sites.map(s => ({
+        site_url: s.site_url,
+        base_price: s.new_price
+      }));
+      
+      const response = await axiosInstance.post<MainProjectAPIResponse>(
+        '/check-pending-prices',
+        { sites: sitesForApi }
+      );
+
+      if (response.data.success && response.data.data) {
+        const apiResults = response.data.data.results || [];
+        
+        const results = apiResults.map((r: any) => ({
+          site_url: r.site_url,
+          exists: r.exists,
+          current_price: r.current_price,
+          new_price: r.new_price,
+          action: r.action === 'SKIP_SAME_PRICE' ? 'SKIP_SAME' as const : 
+                  r.action === 'SKIP_HIGHER_PRICE' ? 'SKIP_HIGHER' as const :
+                  r.action as 'CREATE' | 'UPDATE' | 'SKIP_SAME' | 'SKIP_HIGHER',
+          status: r.status
+        }));
+
+        return { success: true, results };
+      }
+
+      return { success: false, results: [] };
+    } catch (error: any) {
+      console.error('Main project check pending prices error:', error.message);
+      // If endpoint doesn't exist, return empty results (not a failure)
+      return { success: true, results: [] };
+    }
+  }
+
+  /**
+   * Comprehensive price check against ALL modules in main tool:
+   * - Guest Blog Sites (main sites)
+   * - Pending Sites (accepted/rejected/pending)
+   */
+  static async checkPricesAllModules(sites: Array<{ site_url: string; new_price: number }>): Promise<{
+    success: boolean;
+    results: Array<{
+      site_url: string;
+      exists: boolean;
+      current_price?: number;
+      new_price: number;
+      action: 'CREATE' | 'UPDATE' | 'SKIP_SAME' | 'SKIP_HIGHER';
+      source?: string;
+    }>;
+    summary: {
+      total: number;
+      toCreate: number;
+      toUpdate: number;
+      skipSamePrice: number;
+      skipHigherPrice: number;
+    };
+  }> {
+    try {
+      // Check against main guest blog sites
+      const mainSitesResult = await this.checkPrices(sites);
+      
+      // Check against pending sites
+      const pendingSitesResult = await this.checkPricesAgainstPendingSites(sites);
+      
+      // Merge results - use the most restrictive action (skip if exists anywhere with same/higher price)
+      const mergedResults = sites.map(site => {
+        const normalizedUrl = normalizeDomain(site.site_url);
+        
+        // Find result from main sites check
+        const mainResult = mainSitesResult.results.find(r => 
+          normalizeDomain(r.site_url) === normalizedUrl
+        );
+        
+        // Find result from pending sites check
+        const pendingResult = pendingSitesResult.results.find(r => 
+          normalizeDomain(r.site_url) === normalizedUrl
+        );
+        
+        // Determine final action based on both checks
+        // Priority: SKIP_SAME > SKIP_HIGHER > UPDATE > CREATE
+        let finalAction: 'CREATE' | 'UPDATE' | 'SKIP_SAME' | 'SKIP_HIGHER' = 'CREATE';
+        let finalPrice: number | undefined;
+        let source: string | undefined;
+        let exists = false;
+        
+        // Check main sites result
+        if (mainResult?.exists) {
+          exists = true;
+          finalPrice = mainResult.current_price;
+          source = 'guest_blog_sites';
+          finalAction = mainResult.action;
+        }
+        
+        // Check pending sites result - override if more restrictive
+        if (pendingResult?.exists) {
+          const pendingAction = pendingResult.action;
+          
+          // If pending has same/higher price, use that (more restrictive)
+          if (pendingAction === 'SKIP_SAME' || pendingAction === 'SKIP_HIGHER') {
+            // Only override if main didn't already skip, or if pending price is lower
+            if (finalAction === 'CREATE' || finalAction === 'UPDATE' || 
+                (pendingResult.current_price !== undefined && 
+                 (finalPrice === undefined || pendingResult.current_price <= finalPrice))) {
+              exists = true;
+              finalPrice = pendingResult.current_price;
+              source = 'pending_sites';
+              finalAction = pendingAction;
+            }
+          } else if (pendingAction === 'UPDATE' && finalAction === 'CREATE') {
+            // Pending exists but with higher price - can update
+            exists = true;
+            finalPrice = pendingResult.current_price;
+            source = 'pending_sites';
+            finalAction = 'UPDATE';
+          }
+        }
+        
+        return {
+          site_url: site.site_url,
+          exists,
+          current_price: finalPrice,
+          new_price: site.new_price,
+          action: finalAction,
+          source
+        };
+      });
+      
+      // Calculate summary
+      const summary = {
+        total: mergedResults.length,
+        toCreate: mergedResults.filter(r => r.action === 'CREATE').length,
+        toUpdate: mergedResults.filter(r => r.action === 'UPDATE').length,
+        skipSamePrice: mergedResults.filter(r => r.action === 'SKIP_SAME').length,
+        skipHigherPrice: mergedResults.filter(r => r.action === 'SKIP_HIGHER').length
+      };
+      
+      return { success: true, results: mergedResults, summary };
+    } catch (error: any) {
+      console.error('Main project check prices all modules error:', error.message);
+      return {
+        success: false,
+        results: [],
+        summary: { total: 0, toCreate: 0, toUpdate: 0, skipSamePrice: 0, skipHigherPrice: 0 }
+      };
     }
   }
 

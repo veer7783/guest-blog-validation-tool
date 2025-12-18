@@ -12,6 +12,11 @@ export interface CSVRow {
   publisherName?: string;
   publisherEmail?: string;
   publisherContact?: string;
+  publisher?: string;           // Publisher name/email from CSV
+  publisherId?: string;         // Matched publisher ID from main tool
+  publisherMatched?: boolean;   // Whether publisher was matched
+  contactName?: string;         // Contact name if not matched
+  contactEmail?: string;        // Contact email if not matched
   notes?: string;
 }
 
@@ -81,6 +86,10 @@ export interface DataInProcessUpdateRequest {
   publisherEmail?: string;
   publisherName?: string;
   publisherContact?: string;
+  publisherId?: string;
+  publisherMatched?: boolean;
+  contactName?: string;
+  contactEmail?: string;
   da?: number;
   dr?: number;
   traffic?: number;

@@ -10,6 +10,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TablePagination,
   Chip,
   CircularProgress,
   Alert,
@@ -80,6 +81,10 @@ const PushedData: React.FC = () => {
   const [deleteTarget, setDeleteTarget] = useState<'single' | 'bulk'>('single');
   const [recordToDelete, setRecordToDelete] = useState<PushedDataRecord | null>(null);
   const [deleting, setDeleting] = useState(false);
+  
+  // Pagination state
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(50);
 
   useEffect(() => {
     fetchData();
@@ -115,6 +120,20 @@ const PushedData: React.FC = () => {
   const handleClearFilters = () => {
     setSearchQuery('');
     setSelectedPublisher('');
+  };
+
+  // Paginated data
+  const paginatedData = filteredData.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
+
+  // Handle page change
+  const handleChangePage = (_event: unknown, newPage: number) => {
+    setPage(newPage);
+  };
+
+  // Handle rows per page change
+  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setRowsPerPage(parseInt(event.target.value, 10));
+    setPage(0);
   };
 
   const fetchData = async () => {
@@ -377,7 +396,7 @@ const PushedData: React.FC = () => {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {filteredData.map((row) => (
+                  {paginatedData.map((row) => (
                     <TableRow 
                       key={row.id} 
                       hover
@@ -463,6 +482,21 @@ const PushedData: React.FC = () => {
                 </TableBody>
               </Table>
             </TableContainer>
+          )}
+          
+          {/* Pagination - show when data exists */}
+          {filteredData.length > 0 && (
+            <TablePagination
+              component="div"
+              count={filteredData.length}
+              page={page}
+              onPageChange={handleChangePage}
+              rowsPerPage={rowsPerPage}
+              onRowsPerPageChange={handleChangeRowsPerPage}
+              rowsPerPageOptions={[25, 50, 100, 250, 500]}
+              showFirstButton
+              showLastButton
+            />
           )}
         </CardContent>
       </Card>

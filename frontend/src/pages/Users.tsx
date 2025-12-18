@@ -11,6 +11,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TablePagination,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -81,6 +82,10 @@ const Users: React.FC = () => {
   const [secret, setSecret] = useState('');
   
   const [saving, setSaving] = useState(false);
+  
+  // Pagination state
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(50);
 
   useEffect(() => {
     fetchUsers();
@@ -304,6 +309,20 @@ const Users: React.FC = () => {
     }
   };
 
+  // Paginated data
+  const paginatedUsers = users.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
+
+  // Handle page change
+  const handleChangePage = (_event: unknown, newPage: number) => {
+    setPage(newPage);
+  };
+
+  // Handle rows per page change
+  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setRowsPerPage(parseInt(event.target.value, 10));
+    setPage(0);
+  };
+
   return (
     <Box>
       <Typography variant="h4" gutterBottom fontWeight="bold">
@@ -362,7 +381,7 @@ const Users: React.FC = () => {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {users.map((user) => (
+                  {paginatedUsers.map((user) => (
                     <TableRow key={user.id} hover>
                       <TableCell>
                         <Typography variant="body2" fontWeight="bold">
@@ -458,6 +477,21 @@ const Users: React.FC = () => {
                 </TableBody>
               </Table>
             </TableContainer>
+          )}
+          
+          {/* Pagination - show when data exists */}
+          {users.length > 0 && (
+            <TablePagination
+              component="div"
+              count={users.length}
+              page={page}
+              onPageChange={handleChangePage}
+              rowsPerPage={rowsPerPage}
+              onRowsPerPageChange={handleChangeRowsPerPage}
+              rowsPerPageOptions={[25, 50, 100, 250, 500]}
+              showFirstButton
+              showLastButton
+            />
           )}
         </CardContent>
       </Card>

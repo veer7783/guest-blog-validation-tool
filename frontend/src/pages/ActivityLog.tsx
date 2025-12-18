@@ -54,7 +54,7 @@ const ActivityLog: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(25);
+  const [rowsPerPage, setRowsPerPage] = useState(50);
   const [total, setTotal] = useState(0);
   const [showFilters, setShowFilters] = useState(false);
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
@@ -334,7 +334,7 @@ const ActivityLog: React.FC = () => {
                 onPageChange={handleChangePage}
                 rowsPerPage={rowsPerPage}
                 onRowsPerPageChange={handleChangeRowsPerPage}
-                rowsPerPageOptions={[10, 25, 50, 100]}
+                rowsPerPageOptions={[25, 50, 100, 250, 500]}
               />
             </>
           )}

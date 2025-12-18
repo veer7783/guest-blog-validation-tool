@@ -10,6 +10,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TablePagination,
   Chip,
   CircularProgress,
   Alert,
@@ -325,6 +326,10 @@ interface DataInProcess {
   websiteUrl: string;
   publisherEmail?: string;
   publisherName?: string;
+  publisherId?: string;
+  publisherMatched?: boolean;
+  contactName?: string;
+  contactEmail?: string;
   da?: number;
   dr?: number;
   traffic?: number;
@@ -373,15 +378,24 @@ const DataManagement: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   
+  // Pagination state
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(50);
+  
   // Publisher state
   const [publishers, setPublishers] = useState<Publisher[]>([]);
   const [loadingPublishers, setLoadingPublishers] = useState(false);
   const [selectedPublisher, setSelectedPublisher] = useState<Publisher | null>(null);
+  const [creatingPublisher, setCreatingPublisher] = useState(false);
   
   // Edit form state
   const [editFormData, setEditFormData] = useState({
     publisherEmail: '',
     publisherName: '',
+    publisherId: '',
+    publisherMatched: false,
+    contactName: '',
+    contactEmail: '',
     da: '',
     dr: '',
     traffic: '',
@@ -538,6 +552,10 @@ const DataManagement: React.FC = () => {
     setEditFormData({
       publisherEmail: record.publisherEmail || '',
       publisherName: record.publisherName || '',
+      publisherId: record.publisherId || '',
+      publisherMatched: record.publisherMatched || false,
+      contactName: record.contactName || '',
+      contactEmail: record.contactEmail || '',
       da: record.da?.toString() || '',
       dr: record.dr?.toString() || '',
       traffic: record.traffic?.toString() || '',
@@ -550,11 +568,13 @@ const DataManagement: React.FC = () => {
       tat: record.tat || '',
       status: record.status
     });
-    // Find matching publisher from list
-    const matchingPublisher = publishers.find(p => 
-      p.email?.toLowerCase() === record.publisherEmail?.toLowerCase()
-    );
-    setSelectedPublisher(matchingPublisher || null);
+    // Find matching publisher from list (if publisher was matched)
+    if (record.publisherMatched && record.publisherId) {
+      const matchingPublisher = publishers.find(p => p.id === record.publisherId);
+      setSelectedPublisher(matchingPublisher || null);
+    } else {
+      setSelectedPublisher(null);
+    }
     setShowEditDialog(true);
   };
 
@@ -567,6 +587,65 @@ const DataManagement: React.FC = () => {
         publisherEmail: publisher.email || '',
         publisherName: publisher.publisherName || ''
       }));
+    }
+  };
+
+  // Handle marking contact info as publisher
+  const handleCreatePublisherFromEdit = async () => {
+    if (!selectedRecord) return;
+    
+    const name = editFormData.contactName;
+    const email = editFormData.contactEmail;
+    
+    if (!name && !email) {
+      alert('Please enter contact name or email first');
+      return;
+    }
+    
+    setCreatingPublisher(true);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.post(
+        'http://localhost:5000/api/publishers',
+        {
+          name: name || email?.split('@')[0] || 'Unknown',
+          email: email,
+          dataInProcessId: selectedRecord.id
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      
+      if (response.data.success) {
+        // Update the form data with the new publisher info
+        setEditFormData(prev => ({
+          ...prev,
+          publisherId: response.data.data.id,
+          publisherName: response.data.data.publisherName,
+          publisherEmail: response.data.data.email || '',
+          publisherMatched: true
+        }));
+        
+        // Update the record in the list
+        setData(data.map(item => 
+          item.id === selectedRecord.id 
+            ? { 
+                ...item, 
+                publisherId: response.data.data.id,
+                publisherName: response.data.data.publisherName,
+                publisherEmail: response.data.data.email,
+                publisherMatched: true
+              }
+            : item
+        ));
+        
+        alert(`Marked as Publisher: "${response.data.data.publisherName}"\n\nWhen you push this record to the LM Tool, the publisher will be created or linked automatically.`);
+        fetchPublishers(); // Refresh publishers list
+      }
+    } catch (err: any) {
+      console.error('Error marking as publisher:', err);
+      alert(err.response?.data?.error || 'Failed to mark as publisher');
+    } finally {
+      setCreatingPublisher(false);
     }
   };
 
@@ -605,9 +684,13 @@ const DataManagement: React.FC = () => {
       const token = localStorage.getItem('token');
       
       // Prepare update data
-      const updateData = {
+      const updateData: any = {
         publisherEmail: editFormData.publisherEmail,
         publisherName: editFormData.publisherName,
+        publisherId: editFormData.publisherId || undefined,
+        publisherMatched: editFormData.publisherMatched,
+        contactName: editFormData.contactName || undefined,
+        contactEmail: editFormData.contactEmail || undefined,
         da: editFormData.da ? parseInt(editFormData.da) : undefined,
         dr: editFormData.dr ? parseInt(editFormData.dr) : undefined,
         traffic: editFormData.traffic ? parseInt(editFormData.traffic) : undefined,
@@ -700,6 +783,20 @@ const DataManagement: React.FC = () => {
     return matchesSearch && matchesAssignedTo;
   });
 
+  // Paginated data
+  const paginatedData = filteredData.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
+
+  // Handle page change
+  const handleChangePage = (_event: unknown, newPage: number) => {
+    setPage(newPage);
+  };
+
+  // Handle rows per page change
+  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setRowsPerPage(parseInt(event.target.value, 10));
+    setPage(0);
+  };
+
   return (
     <Box>
       <Typography variant="h4" gutterBottom fontWeight="bold">
@@ -766,7 +863,7 @@ const DataManagement: React.FC = () => {
             )}
             
             <Typography variant="body2" color="text.secondary" sx={{ ml: 'auto' }}>
-              Showing {filteredData.length} of {data.length} records
+              Showing {Math.min(rowsPerPage, filteredData.length)} of {filteredData.length} records
             </Typography>
           </Box>
 
@@ -797,10 +894,13 @@ const DataManagement: React.FC = () => {
             <TableContainer>
               <Table>
                 <TableHead>
-                  <TableRow>
+                  <TableRow sx={{ bgcolor: '#f5f5f5' }}>
+                    <TableCell align="center" sx={{ width: 50 }}><strong>Edit</strong></TableCell>
                     <TableCell><strong>Site URL</strong></TableCell>
-                    <TableCell><strong>Publisher Email</strong></TableCell>
-                    <TableCell><strong>Publisher Name</strong></TableCell>
+                    {userRole === 'SUPER_ADMIN' && <TableCell><strong>Publisher</strong></TableCell>}
+                    {userRole === 'SUPER_ADMIN' && <TableCell><strong>Publisher Email</strong></TableCell>}
+                    <TableCell><strong>Contact Name</strong></TableCell>
+                    <TableCell><strong>Contact Email</strong></TableCell>
                     <TableCell><strong>DA</strong></TableCell>
                     <TableCell><strong>DR</strong></TableCell>
                     <TableCell><strong>Traffic</strong></TableCell>
@@ -818,18 +918,73 @@ const DataManagement: React.FC = () => {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {filteredData.map((row) => (
+                  {paginatedData.map((row) => (
                     <TableRow key={row.id} hover>
+                      <TableCell align="center" sx={{ width: 50 }}>
+                        <Tooltip title="Edit">
+                          <IconButton 
+                            size="small" 
+                            color="primary"
+                            onClick={() => handleEdit(row)}
+                          >
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </TableCell>
                       <TableCell>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 'bold' }}>
+                        <Typography 
+                          variant="body2" 
+                          component="a"
+                          href={row.websiteUrl.startsWith('http') ? row.websiteUrl : `https://${row.websiteUrl}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          sx={{ 
+                            fontFamily: 'monospace', 
+                            fontWeight: 'bold',
+                            color: 'primary.main',
+                            textDecoration: 'none',
+                            '&:hover': {
+                              textDecoration: 'underline'
+                            }
+                          }}
+                        >
                           {row.websiteUrl}
                         </Typography>
                       </TableCell>
+                      {userRole === 'SUPER_ADMIN' && (
+                        <TableCell>
+                          {row.publisherMatched ? (
+                            <Box>
+                              <Typography variant="body2">{row.publisherName}</Typography>
+                              <Typography variant="caption" color="success.main">✓ Matched</Typography>
+                            </Box>
+                          ) : (
+                            <Typography variant="caption" color="text.secondary">Not matched</Typography>
+                          )}
+                        </TableCell>
+                      )}
+                      {userRole === 'SUPER_ADMIN' && (
+                        <TableCell>
+                          {row.publisherMatched ? (
+                            row.publisherEmail || <Typography variant="caption" color="text.secondary">-</Typography>
+                          ) : (
+                            <Typography variant="caption" color="text.secondary">-</Typography>
+                          )}
+                        </TableCell>
+                      )}
                       <TableCell>
-                        {row.publisherEmail || <Typography variant="caption" color="text.secondary">Not set</Typography>}
+                        {row.publisherMatched ? (
+                          <Typography variant="caption" color="text.secondary">-</Typography>
+                        ) : (
+                          row.contactName || <Typography variant="caption" color="text.secondary">Not set</Typography>
+                        )}
                       </TableCell>
                       <TableCell>
-                        {row.publisherName || <Typography variant="caption" color="text.secondary">Not set</Typography>}
+                        {row.publisherMatched ? (
+                          <Typography variant="caption" color="text.secondary">-</Typography>
+                        ) : (
+                          row.contactEmail || <Typography variant="caption" color="text.secondary">Not set</Typography>
+                        )}
                       </TableCell>
                       <TableCell>
                         {row.da || <Typography variant="caption" color="text.secondary">-</Typography>}
@@ -889,16 +1044,6 @@ const DataManagement: React.FC = () => {
                           </Typography>
                         </TableCell>
                       )}
-                      <TableCell>
-                        <Typography variant="caption" color="text.secondary">
-                          {row.uploadTask?.fileName || 'Unknown'}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="caption" color="text.secondary">
-                          {formatDate(row.createdAt)}
-                        </Typography>
-                      </TableCell>
                       <TableCell align="center">
                         <Tooltip title="View Details">
                           <IconButton 
@@ -907,16 +1052,6 @@ const DataManagement: React.FC = () => {
                             onClick={() => handleView(row)}
                           >
                             <RemoveRedEyeIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title="Edit Status">
-                          <IconButton 
-                            size="small" 
-                            color="primary"
-                            onClick={() => handleEdit(row)}
-                            sx={{ ml: 1 }}
-                          >
-                            <EditIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
                         {userRole === 'SUPER_ADMIN' && (
@@ -938,16 +1073,23 @@ const DataManagement: React.FC = () => {
               </Table>
             </TableContainer>
           )}
+          
+          {/* Pagination - show when data exists */}
+          {filteredData.length > 0 && (
+            <TablePagination
+              component="div"
+              count={filteredData.length}
+              page={page}
+              onPageChange={handleChangePage}
+              rowsPerPage={rowsPerPage}
+              onRowsPerPageChange={handleChangeRowsPerPage}
+              rowsPerPageOptions={[25, 50, 100, 250, 500]}
+              showFirstButton
+              showLastButton
+            />
+          )}
         </CardContent>
       </Card>
-
-      {data.length > 0 && (
-        <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Typography variant="body2" color="text.secondary">
-            Showing {data.length} record{data.length !== 1 ? 's' : ''}
-          </Typography>
-        </Box>
-      )}
 
       {/* View Dialog */}
       <Dialog open={showViewDialog} onClose={() => setShowViewDialog(false)} maxWidth="md" fullWidth>
@@ -1030,54 +1172,85 @@ const DataManagement: React.FC = () => {
               </Typography>
               
               <Grid container spacing={2}>
-                {/* Publisher Selection from Main Tool */}
-                <Grid item xs={12}>
-                  <Autocomplete
-                    options={publishers}
-                    loading={loadingPublishers}
-                    value={selectedPublisher}
-                    onChange={(_, newValue) => handlePublisherChange(newValue)}
-                    getOptionLabel={(option) => `${option.publisherName} (${option.email || 'No email'})`}
-                    isOptionEqualToValue={(option, value) => option.id === value.id}
-                    renderInput={(params) => (
+                {/* Publisher info - only visible to Super Admin when matched */}
+                {userRole === 'SUPER_ADMIN' && editFormData.publisherMatched && (
+                  <>
+                    <Grid item xs={12}>
+                      <Alert severity="success" sx={{ mb: 1 }}>
+                        Publisher matched from LM Tool: <strong>{editFormData.publisherName}</strong>
+                      </Alert>
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
                       <TextField
-                        {...params}
-                        label="Select Publisher from Main Tool"
-                        placeholder="Search by name or email..."
-                        helperText="Select a publisher to auto-fill email and name"
+                        fullWidth
+                        label="Publisher Name"
+                        value={editFormData.publisherName}
+                        InputProps={{ readOnly: true }}
                       />
-                    )}
-                    renderOption={(props, option) => (
-                      <li {...props} key={option.id}>
-                        <Box>
-                          <Typography variant="body1">{option.publisherName}</Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {option.email || 'No email'}
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="Publisher Email"
+                        value={editFormData.publisherEmail || ''}
+                        InputProps={{ readOnly: true }}
+                      />
+                    </Grid>
+                  </>
+                )}
+                
+                {/* Contact fields - only visible when publisher is NOT matched */}
+                {!editFormData.publisherMatched && (
+                  <>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="Contact Name"
+                        value={editFormData.contactName}
+                        onChange={(e) => setEditFormData({...editFormData, contactName: e.target.value})}
+                        placeholder="Enter contact person name"
+                        helperText="Name of the contact person for this site"
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="Contact Email"
+                        type="email"
+                        value={editFormData.contactEmail}
+                        onChange={(e) => setEditFormData({...editFormData, contactEmail: e.target.value})}
+                        placeholder="contact@example.com"
+                        helperText="Email of the contact person for this site"
+                      />
+                    </Grid>
+                    
+                    {/* Mark as Publisher button - Super Admin only, when contact info exists */}
+                    {userRole === 'SUPER_ADMIN' && (editFormData.contactName || editFormData.contactEmail) && (
+                      <Grid item xs={12}>
+                        <Box sx={{ p: 2, bgcolor: 'info.lighter', borderRadius: 1, border: '1px solid', borderColor: 'info.main' }}>
+                          <Button
+                            variant="contained"
+                            color="info"
+                            onClick={handleCreatePublisherFromEdit}
+                            disabled={creatingPublisher}
+                            startIcon={creatingPublisher ? <CircularProgress size={16} /> : null}
+                            sx={{ mb: 1 }}
+                          >
+                            {creatingPublisher ? 'Marking...' : 'Mark as Publisher'}
+                          </Button>
+                          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                            This will save the contact info as publisher details. When you push this record to the LM Tool:
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary" component="ul" sx={{ mt: 0.5, pl: 2 }}>
+                            <li>If a publisher with this email already exists in LM Tool, it will be linked automatically</li>
+                            <li>If not, a new publisher will be created in the LM Tool</li>
+                            <li>Other sites with the same contact email will also use this publisher</li>
                           </Typography>
                         </Box>
-                      </li>
+                      </Grid>
                     )}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    label="Publisher Email"
-                    value={editFormData.publisherEmail}
-                    InputProps={{ readOnly: true }}
-                    helperText="Auto-filled from publisher selection"
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    label="Publisher Name"
-                    value={editFormData.publisherName}
-                    onChange={(e) => setEditFormData({...editFormData, publisherName: e.target.value})}
-                    InputProps={{ readOnly: !!selectedPublisher }}
-                    helperText={selectedPublisher ? "Auto-filled from publisher" : "Enter manually"}
-                  />
-                </Grid>
+                  </>
+                )}
                 <Grid item xs={6} sm={3}>
                   <TextField
                     fullWidth

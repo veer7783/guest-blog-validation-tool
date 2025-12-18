@@ -18,12 +18,8 @@ export class UserService {
     const {
       role,
       isActive,
-      search,
-      page = 1,
-      limit = 50
+      search
     } = filters;
-
-    const skip = (page - 1) * limit;
 
     const where: any = {};
 
@@ -55,9 +51,7 @@ export class UserService {
             }
           }
         },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit
+        orderBy: { createdAt: 'desc' }
       }),
       prisma.user.count({ where })
     ]);
@@ -85,10 +79,7 @@ export class UserService {
     return {
       users: usersWithTasks,
       pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit)
+        total
       }
     };
   }

@@ -22,7 +22,7 @@ export class DataFinalController {
       }
 
       const page = parseInt(req.query.page as string) || 1;
-      const limit = parseInt(req.query.limit as string) || 10;
+      const limit = parseInt(req.query.limit as string) || 1000;
       const status = req.query.status as string;
       const negotiationStatus = req.query.negotiationStatus as string;
       const reachedBy = req.query.reachedBy as string;
@@ -270,14 +270,66 @@ export class DataFinalController {
       }
       
       // Get records to push
-      const records = await DataFinalService.getRecordsToPush(recordIds);
+      const allRecords = await DataFinalService.getRecordsToPush(recordIds);
       
-      if (records.length === 0) {
+      if (allRecords.length === 0) {
         res.status(400).json({
           success: false,
           message: 'No records to push'
         });
         return;
+      }
+      
+      // Fetch all publishers from main tool to check if contact emails exist as publishers
+      const publishersResult = await MainProjectAPIService.fetchPublishers();
+      const mainToolPublisherEmails = new Set(
+        (publishersResult.publishers || [])
+          .filter(p => p.email)
+          .map(p => p.email!.toLowerCase())
+      );
+      
+      console.log('Main tool publisher emails count:', mainToolPublisherEmails.size);
+      
+      // Filter records: only allow if publisherMatched=true OR email exists in main tool publishers
+      const records: typeof allRecords = [];
+      const recordsWithoutPublisher: typeof allRecords = [];
+      
+      for (const record of allRecords) {
+        const email = (record.publisherEmail || record.contactEmail || '').toLowerCase();
+        const hasLocalPublisher = record.publisherMatched === true;
+        const hasMainToolPublisher = email && mainToolPublisherEmails.has(email);
+        
+        if (hasLocalPublisher || hasMainToolPublisher) {
+          // If email exists in main tool but not marked locally, update the record info
+          if (hasMainToolPublisher && !hasLocalPublisher) {
+            console.log(`Record ${record.websiteUrl}: Email ${email} found in main tool publishers`);
+          }
+          records.push(record);
+        } else {
+          recordsWithoutPublisher.push(record);
+        }
+      }
+      
+      if (records.length === 0) {
+        res.status(400).json({
+          success: false,
+          message: `Cannot push ${recordsWithoutPublisher.length} record(s) - no valid Publisher found. Records must have a matched Publisher (locally marked or existing in main tool) before pushing. Please mark the contact as a Publisher first.`,
+          data: {
+            recordsWithoutPublisher: recordsWithoutPublisher.map(r => ({
+              websiteUrl: r.websiteUrl,
+              contactName: r.contactName,
+              contactEmail: r.contactEmail,
+              publisherMatched: r.publisherMatched
+            }))
+          }
+        });
+        return;
+      }
+      
+      // Log if some records were filtered out
+      if (recordsWithoutPublisher.length > 0) {
+        console.log(`Filtered out ${recordsWithoutPublisher.length} records without valid publisher:`, 
+          recordsWithoutPublisher.map(r => ({ url: r.websiteUrl, contact: r.contactEmail || r.contactName })));
       }
       
       // Check which sites already exist in main project and get their prices
@@ -296,7 +348,7 @@ export class DataFinalController {
       for (const record of records) {
         const dupInfo = duplicateCheck.find(d => d.websiteUrl === record.websiteUrl);
         
-        console.log(`Processing ${record.websiteUrl}: dupInfo=${JSON.stringify(dupInfo)}, gbBasePrice=${record.gbBasePrice}`);
+        console.log(`Processing ${record.websiteUrl}: dupInfo=${JSON.stringify(dupInfo)}, gbBasePrice=${record.gbBasePrice}, publisherEmail=${record.publisherEmail}, publisherName=${record.publisherName}, publisherMatched=${record.publisherMatched}`);
         
         if (!dupInfo || !dupInfo.isDuplicate) {
           // New site - goes directly to main table

@@ -20,6 +20,8 @@ import {
   People as PeopleIcon,
 } from '@mui/icons-material';
 import HistoryIcon from '@mui/icons-material/History';
+import TaskAltIcon from '@mui/icons-material/TaskAlt';
+import SendIcon from '@mui/icons-material/Send';
 import { useAuth } from '../../contexts/AuthContext';
 
 interface SidebarProps {
@@ -37,8 +39,8 @@ const Sidebar: React.FC<SidebarProps> = ({ drawerWidth, mobileOpen, handleDrawer
     { text: 'Dashboard', icon: <DashboardIcon />, path: '/', roles: ['ADMIN', 'SUPER_ADMIN'] },
     { text: 'Upload CSV', icon: <UploadIcon />, path: '/upload', roles: ['SUPER_ADMIN'] },
     { text: 'Data Management', icon: <DataIcon />, path: '/data', roles: ['ADMIN', 'SUPER_ADMIN'] },
-    { text: 'Data Final', icon: <DataIcon />, path: '/data-final', roles: ['SUPER_ADMIN'] },
-    { text: 'Pushed Data', icon: <CheckCircle />, path: '/pushed-data', roles: ['SUPER_ADMIN'] },
+    { text: 'Data Finalization', icon: <TaskAltIcon />, path: '/data-final', roles: ['SUPER_ADMIN'] },
+    { text: 'Pushed Data', icon: <SendIcon />, path: '/pushed-data', roles: ['SUPER_ADMIN'] },
     { text: 'Users', icon: <PeopleIcon />, path: '/users', roles: ['SUPER_ADMIN'] },
     { text: 'Activity Log', icon: <HistoryIcon />, path: '/activity-log', roles: ['SUPER_ADMIN'] },
   ];
@@ -51,7 +53,7 @@ const Sidebar: React.FC<SidebarProps> = ({ drawerWidth, mobileOpen, handleDrawer
     <Box>
       <Toolbar>
         <Typography variant="h6" noWrap component="div" fontWeight="bold">
-          GB Validation
+         Hypwave Data Processing
         </Typography>
       </Toolbar>
       <Divider />

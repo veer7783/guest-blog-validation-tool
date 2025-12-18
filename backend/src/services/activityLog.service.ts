@@ -86,12 +86,8 @@ export class ActivityLogService {
       action,
       entityType,
       startDate,
-      endDate,
-      page = 1,
-      limit = 50
+      endDate
     } = filters;
-
-    const skip = (page - 1) * limit;
 
     const where: any = {};
 
@@ -118,9 +114,7 @@ export class ActivityLogService {
             }
           }
         },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit
+        orderBy: { createdAt: 'desc' }
       }),
       prisma.activityLog.count({ where })
     ]);
@@ -128,10 +122,7 @@ export class ActivityLogService {
     return {
       logs,
       pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit)
+        total
       }
     };
   }

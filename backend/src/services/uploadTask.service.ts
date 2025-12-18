@@ -49,8 +49,7 @@ export class UploadTaskService {
    * Get all upload tasks with pagination
    */
   static async getAll(params: PaginationParams & { assignedTo?: string; status?: string }) {
-    const { page = 1, limit = 10, sortBy = 'uploadedAt', sortOrder = 'desc', assignedTo, status } = params;
-    const skip = (page - 1) * limit;
+    const { sortBy = 'uploadedAt', sortOrder = 'desc', assignedTo, status } = params;
 
     const where: any = {};
     if (assignedTo) where.assignedTo = assignedTo;
@@ -59,8 +58,6 @@ export class UploadTaskService {
     const [tasks, total] = await Promise.all([
       prisma.dataUploadTask.findMany({
         where,
-        skip,
-        take: limit,
         orderBy: { [sortBy]: sortOrder },
         include: {
           assignedToUser: {
@@ -87,10 +84,7 @@ export class UploadTaskService {
     return {
       tasks,
       pagination: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit)
+        total
       }
     };
   }

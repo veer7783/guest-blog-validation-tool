@@ -59,11 +59,15 @@ export class CSVParserService {
               }
             }
 
-            // Store the normalized domain and price (if provided)
+            // Extract publisher if provided (only check 'publisher' column)
+            const publisher = row.publisher || '';
+
+            // Store the normalized domain, price, and publisher (if provided)
             const validRow: CSVRow = {
               websiteUrl: normalizeDomain(websiteUrl),
-              price: price !== undefined ? price.toString() : undefined
-              // All other fields (category, language, country, DA, DR, publisher info, etc.) 
+              price: price !== undefined ? price.toString() : undefined,
+              publisher: publisher.trim() || undefined
+              // All other fields (category, language, country, DA, DR, etc.) 
               // will be empty and filled later in "Data in Process" page
             };
 
@@ -87,15 +91,15 @@ export class CSVParserService {
   }
 
   /**
-   * Generate CSV template (basic - Site only)
+   * Generate CSV template (basic - Site and Publisher)
    */
   static generateTemplate(): string {
-    const headers = ['Site'];
+    const headers = ['Site', 'Publisher'];
     const exampleRows = [
-      'example.com',
-      'https://example2.com',
-      'www.example3.com',
-      'http://example4.com'
+      'example.com,john@publisher.com',
+      'https://example2.com,Jane Smith',
+      'www.example3.com,',
+      'http://example4.com,publisher@email.com'
     ];
 
     return `${headers.join(',')}\n${exampleRows.join('\n')}`;
@@ -105,12 +109,12 @@ export class CSVParserService {
    * Generate CSV template with price column
    */
   static generateTemplateWithPrice(): string {
-    const headers = ['Site', 'GB Base Price'];
+    const headers = ['Site', 'GB Base Price', 'Publisher'];
     const exampleRows = [
-      'example.com,50',
-      'https://example2.com,75',
-      'www.example3.com,100',
-      'http://example4.com,125'
+      'example.com,50,john@publisher.com',
+      'https://example2.com,75,Jane Smith',
+      'www.example3.com,100,',
+      'http://example4.com,125,publisher@email.com'
     ];
 
     return `${headers.join(',')}\n${exampleRows.join('\n')}`;

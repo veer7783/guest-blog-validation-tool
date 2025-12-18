@@ -74,9 +74,12 @@ export class DuplicateCheckService {
       select: { websiteUrl: true, id: true, price: true }
     });
 
+    // Only check unpushed records in dataFinal (mainProjectId is null)
+    // Pushed records should NOT block new uploads - they can be re-uploaded with new prices
     const dataFinalRecords = await prisma.dataFinal.findMany({
       where: {
-        websiteUrl: { in: normalizedUrls }
+        websiteUrl: { in: normalizedUrls },
+        mainProjectId: null  // Only unpushed records count as duplicates
       },
       select: { websiteUrl: true, id: true, gbBasePrice: true }
     });

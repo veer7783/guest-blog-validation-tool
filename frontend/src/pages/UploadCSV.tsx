@@ -361,34 +361,28 @@ const UploadCSV: React.FC = () => {
               </Box>
             )}
 
-            {/* Skipped Section - Show only actual skipped items (not price updates) */}
+            {/* Skipped Section - Only show truly skipped items (NOT price updates) */}
             {(() => {
-              // Calculate actual skipped count
-              // priceSkipped = sites with same or higher price (already counted separately)
-              // duplicatesInCSV = duplicates within the CSV file
-              // duplicatesInCurrentSystem = duplicates in validation tool's own database
-              // duplicatesInMainProject without price check = true duplicates (no price in CSV)
-              const actualSkipped = (uploadResult.summary.duplicatesInCSV || 0) + 
+              // Calculate skipped count - EXCLUDE priceSkipped as those are handled in Price Updates section
+              const totalSkipped = (uploadResult.summary.duplicatesInCSV || 0) + 
                 (uploadResult.summary.duplicatesInCurrentSystem || 0) + 
-                (uploadResult.summary.priceSkipped || 0);
+                (uploadResult.summary.duplicatesInMainProject || 0);
               
-              if (actualSkipped <= 0) return null;
+              // Only show price-skipped if there are NO price updates (meaning they were truly skipped, not updated)
+              const priceSkippedOnly = uploadResult.summary.priceSkipped && !uploadResult.summary.priceUpdates 
+                ? uploadResult.summary.priceSkipped 
+                : 0;
+              
+              const finalSkipped = totalSkipped + priceSkippedOnly;
+              
+              if (finalSkipped <= 0) return null;
               
               return (
                 <Box sx={{ mb: 1 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Typography variant="body1" sx={{ color: 'warning.main' }}>
-                      ⏭️ <strong>Skipped:</strong> {actualSkipped}
+                      ⏭️ <strong>Skipped:</strong> {finalSkipped}
                     </Typography>
-                    {uploadResult.duplicateDomains && uploadResult.duplicateDomains.length > 5 && (
-                      <Chip 
-                        label={`+${uploadResult.duplicateDomains.length - 5} more`}
-                        size="small"
-                        color="warning"
-                        onClick={() => setShowDuplicatesDialog(true)}
-                        sx={{ cursor: 'pointer', fontSize: '0.75rem' }}
-                      />
-                    )}
                   </Box>
                   
                   {/* Show CSV duplicates */}
@@ -401,26 +395,22 @@ const UploadCSV: React.FC = () => {
                   {/* Show Current System duplicates */}
                   {uploadResult.summary.duplicatesInCurrentSystem && uploadResult.summary.duplicatesInCurrentSystem > 0 && (
                     <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', ml: 3, mt: 0.5 }}>
-                      • {uploadResult.summary.duplicatesInCurrentSystem} already exist in current project
+                      • {uploadResult.summary.duplicatesInCurrentSystem} already in Data Management
                     </Typography>
                   )}
 
-                  {/* Show price-skipped domains */}
-                  {uploadResult.summary.priceSkipped && uploadResult.summary.priceSkipped > 0 && (
+                  {/* Show Main Project duplicates */}
+                  {uploadResult.summary.duplicatesInMainProject && uploadResult.summary.duplicatesInMainProject > 0 && (
                     <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', ml: 3, mt: 0.5 }}>
-                      • {uploadResult.summary.priceSkipped} skipped (price same or higher than existing)
+                      • {uploadResult.summary.duplicatesInMainProject} already in LM Tool
                     </Typography>
                   )}
-                  
-                  {/* Show skipped domain names */}
-                  {uploadResult.priceSkippedDomains && uploadResult.priceSkippedDomains.length > 0 && (
-                    <Box sx={{ ml: 3, mt: 0.5 }}>
-                      {uploadResult.priceSkippedDomains.slice(0, 3).map((d, idx) => (
-                        <Typography key={idx} variant="caption" sx={{ color: 'text.secondary', display: 'block', fontStyle: 'italic' }}>
-                          • {d.domain} ({d.reason})
-                        </Typography>
-                      ))}
-                    </Box>
+
+                  {/* Show price-skipped ONLY if no price updates exist */}
+                  {priceSkippedOnly > 0 && (
+                    <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', ml: 3, mt: 0.5 }}>
+                      • {priceSkippedOnly} same/higher price (no update needed)
+                    </Typography>
                   )}
                 </Box>
               );

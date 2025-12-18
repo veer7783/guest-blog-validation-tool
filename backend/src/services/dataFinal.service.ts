@@ -33,8 +33,7 @@ export class DataFinalService {
    * Get all data final records with pagination
    */
   static async getAll(filters: DataFinalFilters) {
-    const { page, limit, status, negotiationStatus, reachedBy } = filters;
-    const skip = (page - 1) * limit;
+    const { status, negotiationStatus, reachedBy } = filters;
 
     const where: any = {};
     if (status) where.status = status;
@@ -47,8 +46,6 @@ export class DataFinalService {
     const [data, total] = await Promise.all([
       prisma.dataFinal.findMany({
         where,
-        skip,
-        take: limit,
         orderBy: {
           createdAt: 'desc'
         },
@@ -75,10 +72,7 @@ export class DataFinalService {
     return {
       data,
       pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit)
+        total
       }
     };
   }

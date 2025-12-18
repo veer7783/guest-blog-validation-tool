@@ -35,7 +35,12 @@ export class DataInProcessService {
   /**
    * Bulk create data in process records
    */
-  static async bulkCreate(records: DataInProcessCreateRequest[]) {
+  static async bulkCreate(records: Array<DataInProcessCreateRequest & {
+    publisherId?: string;
+    publisherMatched?: boolean;
+    contactName?: string;
+    contactEmail?: string;
+  }>) {
     const created = await prisma.dataInProcess.createMany({
       data: records.map(r => ({
         websiteUrl: r.websiteUrl,
@@ -49,6 +54,10 @@ export class DataInProcessService {
         publisherName: r.publisherName,
         publisherEmail: r.publisherEmail,
         publisherContact: r.publisherContact,
+        publisherId: r.publisherId,
+        publisherMatched: r.publisherMatched || false,
+        contactName: r.contactName,
+        contactEmail: r.contactEmail,
         notes: r.notes,
         status: 'PENDING',
         uploadTaskId: r.uploadTaskId
@@ -62,8 +71,7 @@ export class DataInProcessService {
    * Get all data in process with pagination
    */
   static async getAll(params: PaginationParams & { uploadTaskId?: string; status?: string; userId?: string; userRole?: string }) {
-    const { page = 1, limit = 10, sortBy = 'createdAt', sortOrder = 'desc', uploadTaskId, status, userId, userRole } = params;
-    const skip = (page - 1) * limit;
+    const { sortBy = 'createdAt', sortOrder = 'desc', uploadTaskId, status, userId, userRole } = params;
 
     const where: any = {};
     if (uploadTaskId) where.uploadTaskId = uploadTaskId;
@@ -79,8 +87,6 @@ export class DataInProcessService {
     const [data, total] = await Promise.all([
       prisma.dataInProcess.findMany({
         where,
-        skip,
-        take: limit,
         orderBy: { [sortBy]: sortOrder },
         include: {
           uploadTask: {
@@ -107,10 +113,7 @@ export class DataInProcessService {
     return {
       data,
       pagination: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit)
+        total
       }
     };
   }
@@ -169,6 +172,10 @@ export class DataInProcessService {
         publisherName: updateData.publisherName ?? existing.publisherName,
         publisherEmail: updateData.publisherEmail ?? existing.publisherEmail,
         publisherContact: updateData.publisherContact ?? existing.publisherContact,
+        publisherId: updateData.publisherId ?? existing.publisherId,
+        publisherMatched: updateData.publisherMatched ?? existing.publisherMatched,
+        contactName: updateData.contactName ?? existing.contactName,
+        contactEmail: updateData.contactEmail ?? existing.contactEmail,
         notes: updateData.notes ?? existing.notes,
         da: updateData.da ?? existing.da,
         dr: updateData.dr ?? existing.dr,
@@ -191,6 +198,10 @@ export class DataInProcessService {
           publisherName: mergedData.publisherName,
           publisherEmail: mergedData.publisherEmail,
           publisherContact: mergedData.publisherContact,
+          publisherId: mergedData.publisherId,
+          publisherMatched: mergedData.publisherMatched,
+          contactName: mergedData.contactName,
+          contactEmail: mergedData.contactEmail,
           notes: mergedData.notes,
           status: 'ACTIVE', // DataFinal uses SiteStatus (ACTIVE/INACTIVE)
           reachedBy: updatedBy, // Track who marked it as reached
@@ -250,6 +261,10 @@ export class DataInProcessService {
         publisherEmail: updateData.publisherEmail,
         publisherName: updateData.publisherName,
         publisherContact: updateData.publisherContact,
+        publisherId: updateData.publisherId,
+        publisherMatched: updateData.publisherMatched,
+        contactName: updateData.contactName,
+        contactEmail: updateData.contactEmail,
         da: updateData.da,
         dr: updateData.dr,
         traffic: updateData.traffic,

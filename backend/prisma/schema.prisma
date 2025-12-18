@@ -108,6 +108,10 @@ model DataInProcess {
   publisherName     String?
   publisherEmail    String?
   publisherContact  String?
+  publisherId       String?         // ID from main tool if publisher matched
+  publisherMatched  Boolean         @default(false) // Whether publisher was matched from main tool
+  contactName       String?         // Contact name if publisher not matched
+  contactEmail      String?         // Contact email if publisher not matched
   notes             String?
   // New fields for domain metrics
   da                Int?            // Domain Authority (0-100)
@@ -156,6 +160,10 @@ model DataFinal {
   publisherName       String?
   publisherEmail      String?
   publisherContact    String?
+  publisherId         String?             // ID from main tool if publisher matched
+  publisherMatched    Boolean             @default(false) // Whether publisher was matched from main tool
+  contactName         String?             // Contact name if publisher not matched
+  contactEmail        String?             // Contact email if publisher not matched
   notes               String?
   // Domain metrics
   da                  Int?                // Domain Authority (0-100)
@@ -215,6 +223,10 @@ model CompletedProcessData {
   publisherName       String?
   publisherEmail      String?
   publisherContact    String?
+  publisherId         String?             // ID from main tool if publisher matched
+  publisherMatched    Boolean             @default(false)
+  contactName         String?
+  contactEmail        String?
   notes               String?
   // Domain metrics
   da                  Int?                // Domain Authority

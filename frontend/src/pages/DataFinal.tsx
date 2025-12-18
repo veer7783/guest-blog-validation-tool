@@ -11,6 +11,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TablePagination,
   Chip,
   CircularProgress,
   Alert,
@@ -328,6 +329,10 @@ interface DataFinalRecord {
   websiteUrl: string;
   publisherName?: string;
   publisherEmail?: string;
+  publisherId?: string;
+  publisherMatched?: boolean;
+  contactName?: string;
+  contactEmail?: string;
   da?: number;
   dr?: number;
   traffic?: number;
@@ -369,9 +374,16 @@ const DataFinal: React.FC = () => {
   const [filterByUser, setFilterByUser] = useState<string>('all');
   const [users, setUsers] = useState<Array<{ id: string; firstName: string; lastName: string }>>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  
+  // Pagination state
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(50);
   const [deleting, setDeleting] = useState(false);
   const [success, setSuccess] = useState('');
   const [pushing, setPushing] = useState(false);
+  const [creatingPublisher, setCreatingPublisher] = useState(false);
+  const [showCreatePublisherDialog, setShowCreatePublisherDialog] = useState(false);
+  const [createPublisherRecord, setCreatePublisherRecord] = useState<DataFinalRecord | null>(null);
   
   // Publisher state
   const [publishers, setPublishers] = useState<Publisher[]>([]);
@@ -382,6 +394,9 @@ const DataFinal: React.FC = () => {
   const [editFormData, setEditFormData] = useState({
     publisherEmail: '',
     publisherName: '',
+    publisherMatched: false,
+    contactName: '',
+    contactEmail: '',
     da: '',
     dr: '',
     traffic: '',
@@ -489,6 +504,9 @@ const DataFinal: React.FC = () => {
     setEditFormData({
       publisherEmail: record.publisherEmail || '',
       publisherName: record.publisherName || '',
+      publisherMatched: record.publisherMatched || false,
+      contactName: record.contactName || '',
+      contactEmail: record.contactEmail || '',
       da: record.da?.toString() || '',
       dr: record.dr?.toString() || '',
       traffic: record.traffic?.toString() || '',
@@ -542,6 +560,8 @@ const DataFinal: React.FC = () => {
       const updateData = {
         publisherEmail: editFormData.publisherEmail,
         publisherName: editFormData.publisherName,
+        contactName: editFormData.contactName,
+        contactEmail: editFormData.contactEmail,
         da: editFormData.da ? parseInt(editFormData.da) : undefined,
         dr: editFormData.dr ? parseInt(editFormData.dr) : undefined,
         traffic: editFormData.traffic ? parseInt(editFormData.traffic) : undefined,
@@ -582,6 +602,72 @@ const DataFinal: React.FC = () => {
       alert(err.response?.data?.message || 'Failed to update record');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Handle marking contact info as publisher
+  const handleCreatePublisher = async () => {
+    if (!createPublisherRecord) return;
+    
+    const name = createPublisherRecord.contactName;
+    const email = createPublisherRecord.contactEmail;
+    
+    if (!name && !email) {
+      alert('No contact information available to mark as publisher');
+      return;
+    }
+    
+    setCreatingPublisher(true);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.post(
+        'http://localhost:5000/api/publishers',
+        {
+          name: name || email?.split('@')[0] || 'Unknown',
+          email: email,
+          dataFinalId: createPublisherRecord.id
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      
+      if (response.data.success) {
+        const publisherName = response.data.data.publisherName;
+        const publisherEmail = response.data.data.email || '';
+        
+        // Update the record in the list
+        setData(data.map(item => 
+          item.id === createPublisherRecord.id 
+            ? { 
+                ...item, 
+                publisherId: response.data.data.id,
+                publisherName: publisherName,
+                publisherEmail: publisherEmail,
+                publisherMatched: true
+              }
+            : item
+        ));
+        
+        // Also update editFormData if we're editing this record
+        setEditFormData(prev => ({
+          ...prev,
+          publisherName: publisherName,
+          publisherEmail: publisherEmail,
+          publisherMatched: true
+        }));
+        
+        setSuccess(`Marked as Publisher: "${publisherName}". When you push this record to the LM Tool, the publisher will be created or linked automatically.`);
+        setShowCreatePublisherDialog(false);
+        setCreatePublisherRecord(null);
+        
+        // Refresh data from backend to ensure consistency
+        fetchData();
+        fetchPublishers();
+      }
+    } catch (err: any) {
+      console.error('Error marking as publisher:', err);
+      alert(err.response?.data?.error || 'Failed to mark as publisher');
+    } finally {
+      setCreatingPublisher(false);
     }
   };
 
@@ -641,6 +727,27 @@ const DataFinal: React.FC = () => {
   const handlePushSelected = async () => {
     if (selectedIds.size === 0) return;
     
+    // Check if all selected records have GB Base Price
+    const selectedRecords = data.filter(d => selectedIds.has(d.id));
+    const recordsWithoutPrice = selectedRecords.filter(r => !r.gbBasePrice || r.gbBasePrice <= 0);
+    
+    if (recordsWithoutPrice.length > 0) {
+      const siteUrls = recordsWithoutPrice.map(r => r.websiteUrl).join('\n- ');
+      setError(`GB Base Price is required before pushing to LM Tool. The following sites are missing GB Base Price:\n- ${siteUrls}`);
+      return;
+    }
+    
+    // Check if all selected records have publisher email (either from matched publisher or contact)
+    const recordsWithoutPublisher = selectedRecords.filter(r => 
+      !r.publisherEmail && !r.contactEmail
+    );
+    
+    if (recordsWithoutPublisher.length > 0) {
+      const siteUrls = recordsWithoutPublisher.map(r => r.websiteUrl).join('\n- ');
+      setError(`Publisher/Contact Email is required before pushing to LM Tool. The following sites are missing email:\n- ${siteUrls}`);
+      return;
+    }
+    
     if (!window.confirm(`Push ${selectedIds.size} site(s) to LM Tool?`)) {
       return;
     }
@@ -686,10 +793,20 @@ const DataFinal: React.FC = () => {
   };
 
   const handlePushAll = async () => {
-    const unpushedCount = data.filter(d => !d.mainProjectId).length;
+    const unpushedRecords = data.filter(d => !d.mainProjectId);
+    const unpushedCount = unpushedRecords.length;
     
     if (unpushedCount === 0) {
       setError('No unpushed sites to transfer');
+      return;
+    }
+    
+    // Check if all unpushed records have GB Base Price
+    const recordsWithoutPrice = unpushedRecords.filter(r => !r.gbBasePrice || r.gbBasePrice <= 0);
+    
+    if (recordsWithoutPrice.length > 0) {
+      const siteUrls = recordsWithoutPrice.map(r => r.websiteUrl).join('\n- ');
+      setError(`GB Base Price is required before pushing to LM Tool. The following sites are missing GB Base Price:\n- ${siteUrls}`);
       return;
     }
     
@@ -787,6 +904,20 @@ const DataFinal: React.FC = () => {
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  // Paginated data
+  const paginatedData = data.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
+
+  // Handle page change
+  const handleChangePage = (_event: unknown, newPage: number) => {
+    setPage(newPage);
+  };
+
+  // Handle rows per page change
+  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setRowsPerPage(parseInt(event.target.value, 10));
+    setPage(0);
   };
 
   return (
@@ -895,8 +1026,10 @@ const DataFinal: React.FC = () => {
                         onChange={handleSelectAll}
                       />
                     </TableCell>
+                    <TableCell align="center" sx={{ width: 50 }}><strong>Edit</strong></TableCell>
                     <TableCell><strong>Site URL</strong></TableCell>
-                    <TableCell><strong>Publisher</strong></TableCell>
+                    <TableCell><strong>Publisher / Contact</strong></TableCell>
+                    {user?.role === 'SUPER_ADMIN' && <TableCell><strong>Email</strong></TableCell>}
                     <TableCell><strong>DA</strong></TableCell>
                     <TableCell><strong>DR</strong></TableCell>
                     <TableCell><strong>Traffic</strong></TableCell>
@@ -914,7 +1047,7 @@ const DataFinal: React.FC = () => {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {data.map((row) => (
+                  {paginatedData.map((row) => (
                     <TableRow key={row.id} hover>
                       <TableCell padding="checkbox">
                         <Checkbox
@@ -922,14 +1055,61 @@ const DataFinal: React.FC = () => {
                           onChange={() => handleSelectOne(row.id)}
                         />
                       </TableCell>
+                      <TableCell align="center" sx={{ width: 50 }}>
+                        <Tooltip title="Edit">
+                          <IconButton 
+                            size="small" 
+                            color="primary"
+                            onClick={() => handleEdit(row)}
+                          >
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </TableCell>
                       <TableCell>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 'bold' }}>
+                        <Typography 
+                          variant="body2" 
+                          component="a"
+                          href={row.websiteUrl.startsWith('http') ? row.websiteUrl : `https://${row.websiteUrl}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          sx={{ 
+                            fontFamily: 'monospace', 
+                            fontWeight: 'bold',
+                            color: 'primary.main',
+                            textDecoration: 'none',
+                            '&:hover': {
+                              textDecoration: 'underline'
+                            }
+                          }}
+                        >
                           {row.websiteUrl}
                         </Typography>
                       </TableCell>
                       <TableCell>
-                        {row.publisherName || <Typography variant="caption" color="text.secondary">Not set</Typography>}
+                        {row.publisherMatched ? (
+                          <Box>
+                            <Typography variant="body2">{row.publisherName}</Typography>
+                            <Typography variant="caption" color="success.main">✓ Publisher</Typography>
+                          </Box>
+                        ) : row.contactName || row.contactEmail ? (
+                          <Box>
+                            <Typography variant="body2">{row.contactName || 'No name'}</Typography>
+                            <Typography variant="caption" color="info.main">Contact</Typography>
+                          </Box>
+                        ) : (
+                          <Typography variant="caption" color="text.secondary">Not set</Typography>
+                        )}
                       </TableCell>
+                      {user?.role === 'SUPER_ADMIN' && (
+                        <TableCell>
+                          {row.publisherMatched ? (
+                            row.publisherEmail || <Typography variant="caption" color="text.secondary">-</Typography>
+                          ) : (
+                            row.contactEmail || <Typography variant="caption" color="text.secondary">-</Typography>
+                          )}
+                        </TableCell>
+                      )}
                       <TableCell>
                         {row.da || <Typography variant="caption" color="text.secondary">-</Typography>}
                       </TableCell>
@@ -1013,16 +1193,6 @@ const DataFinal: React.FC = () => {
                             <RemoveRedEyeIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
-                        <Tooltip title="Edit">
-                          <IconButton 
-                            size="small" 
-                            color="primary"
-                            onClick={() => handleEdit(row)}
-                            sx={{ ml: 1 }}
-                          >
-                            <EditIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
                         <Tooltip title="Delete">
                           <IconButton 
                             size="small" 
@@ -1033,6 +1203,23 @@ const DataFinal: React.FC = () => {
                             <DeleteIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
+                        {/* Mark as Publisher button - only for Super Admin and records with contact info but no matched publisher */}
+                        {user?.role === 'SUPER_ADMIN' && !row.publisherMatched && (row.contactName || row.contactEmail) && (
+                          <Tooltip title="Mark as Publisher">
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              color="info"
+                              onClick={() => {
+                                setCreatePublisherRecord(row);
+                                setShowCreatePublisherDialog(true);
+                              }}
+                              sx={{ ml: 1, minWidth: 'auto', px: 1 }}
+                            >
+                              Mark Publisher
+                            </Button>
+                          </Tooltip>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -1040,16 +1227,23 @@ const DataFinal: React.FC = () => {
               </Table>
             </TableContainer>
           )}
+          
+          {/* Pagination - show when data exists */}
+          {data.length > 0 && (
+            <TablePagination
+              component="div"
+              count={data.length}
+              page={page}
+              onPageChange={handleChangePage}
+              rowsPerPage={rowsPerPage}
+              onRowsPerPageChange={handleChangeRowsPerPage}
+              rowsPerPageOptions={[25, 50, 100, 250, 500]}
+              showFirstButton
+              showLastButton
+            />
+          )}
         </CardContent>
       </Card>
-
-      {data.length > 0 && (
-        <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Typography variant="body2" color="text.secondary">
-            Showing {data.length} record{data.length !== 1 ? 's' : ''}
-          </Typography>
-        </Box>
-      )}
 
       {/* View Dialog */}
       <Dialog open={showViewDialog} onClose={() => setShowViewDialog(false)} maxWidth="md" fullWidth>
@@ -1065,22 +1259,52 @@ const DataFinal: React.FC = () => {
                   InputProps={{ readOnly: true }}
                 />
               </Grid>
-              <Grid item xs={6}>
-                <TextField
-                  fullWidth
-                  label="Publisher Name"
-                  value={selectedRecord.publisherName || 'Not set'}
-                  InputProps={{ readOnly: true }}
-                />
-              </Grid>
-              <Grid item xs={6}>
-                <TextField
-                  fullWidth
-                  label="Publisher Email"
-                  value={selectedRecord.publisherEmail || 'Not set'}
-                  InputProps={{ readOnly: true }}
-                />
-              </Grid>
+              {selectedRecord.publisherMatched ? (
+                <>
+                  <Grid item xs={12}>
+                    <Alert severity="success">
+                      {selectedRecord.publisherId?.startsWith('pending_')
+                        ? 'Publisher will be created in the LM Tool when you push this record.'
+                        : 'Publisher matched from LM Tool'}
+                    </Alert>
+                  </Grid>
+                  <Grid item xs={6}>
+                    <TextField
+                      fullWidth
+                      label="Publisher Name"
+                      value={selectedRecord.publisherName || ''}
+                      InputProps={{ readOnly: true }}
+                    />
+                  </Grid>
+                  <Grid item xs={6}>
+                    <TextField
+                      fullWidth
+                      label="Publisher Email"
+                      value={selectedRecord.publisherEmail || ''}
+                      InputProps={{ readOnly: true }}
+                    />
+                  </Grid>
+                </>
+              ) : (
+                <>
+                  <Grid item xs={6}>
+                    <TextField
+                      fullWidth
+                      label="Contact Name"
+                      value={selectedRecord.contactName || ''}
+                      InputProps={{ readOnly: true }}
+                    />
+                  </Grid>
+                  <Grid item xs={6}>
+                    <TextField
+                      fullWidth
+                      label="Contact Email"
+                      value={selectedRecord.contactEmail || ''}
+                      InputProps={{ readOnly: true }}
+                    />
+                  </Grid>
+                </>
+              )}
               <Grid item xs={3}>
                 <TextField
                   fullWidth
@@ -1204,54 +1428,110 @@ const DataFinal: React.FC = () => {
               </Typography>
               
               <Grid container spacing={2}>
-                {/* Publisher Selection from Main Tool */}
-                <Grid item xs={12}>
-                  <Autocomplete
-                    options={publishers}
-                    loading={loadingPublishers}
-                    value={selectedPublisher}
-                    onChange={(_, newValue) => handlePublisherChange(newValue)}
-                    getOptionLabel={(option) => `${option.publisherName} (${option.email || 'No email'})`}
-                    isOptionEqualToValue={(option, value) => option.id === value.id}
-                    renderInput={(params) => (
-                      <TextField
-                        {...params}
-                        label="Select Publisher from Main Tool"
-                        placeholder="Search by name or email..."
-                        helperText="Select a publisher to auto-fill email and name"
-                      />
+                {/* Publisher info - read-only when matched from main tool, editable when pending */}
+                {editFormData.publisherMatched ? (
+                  <>
+                    <Grid item xs={12}>
+                      <Alert severity="success" sx={{ mb: 1 }}>
+                        {selectedRecord.publisherId?.startsWith('pending_') ? (
+                          <>Publisher will be created in the LM Tool when you push this record.</>
+                        ) : (
+                          <>Publisher matched from LM Tool: <strong>{editFormData.publisherName}</strong></>
+                        )}
+                      </Alert>
+                    </Grid>
+                    {user?.role === 'SUPER_ADMIN' && (
+                      <>
+                        <Grid item xs={12} sm={6}>
+                          <TextField
+                            fullWidth
+                            label="Publisher Name"
+                            value={editFormData.publisherName}
+                            onChange={selectedRecord.publisherId?.startsWith('pending_') 
+                              ? (e) => setEditFormData({...editFormData, publisherName: e.target.value})
+                              : undefined}
+                            InputProps={{ readOnly: !selectedRecord.publisherId?.startsWith('pending_') }}
+                            helperText={selectedRecord.publisherId?.startsWith('pending_') 
+                              ? "Editable - update publisher name if needed" 
+                              : "Read-only - matched from LM Tool"}
+                          />
+                        </Grid>
+                        <Grid item xs={12} sm={6}>
+                          <TextField
+                            fullWidth
+                            label="Publisher Email"
+                            type="email"
+                            value={editFormData.publisherEmail || ''}
+                            onChange={selectedRecord.publisherId?.startsWith('pending_')
+                              ? (e) => setEditFormData({...editFormData, publisherEmail: e.target.value})
+                              : undefined}
+                            InputProps={{ readOnly: !selectedRecord.publisherId?.startsWith('pending_') }}
+                            helperText={selectedRecord.publisherId?.startsWith('pending_') 
+                              ? "Editable - update publisher email if needed" 
+                              : "Read-only - matched from LM Tool"}
+                          />
+                        </Grid>
+                      </>
                     )}
-                    renderOption={(props, option) => (
-                      <li {...props} key={option.id}>
-                        <Box>
-                          <Typography variant="body1">{option.publisherName}</Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {option.email || 'No email'}
+                  </>
+                ) : (
+                  <>
+                    {/* Contact fields - only visible when publisher is NOT matched */}
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="Contact Name"
+                        value={editFormData.contactName || ''}
+                        onChange={(e) => setEditFormData({...editFormData, contactName: e.target.value})}
+                        placeholder="Enter contact person name"
+                        helperText="Name of the contact person for this site"
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="Contact Email"
+                        type="email"
+                        value={editFormData.contactEmail || ''}
+                        onChange={(e) => setEditFormData({...editFormData, contactEmail: e.target.value})}
+                        placeholder="contact@example.com"
+                        helperText="Email of the contact person for this site"
+                      />
+                    </Grid>
+                    
+                    {/* Mark as Publisher button - when contact info exists */}
+                    {user?.role === 'SUPER_ADMIN' && (editFormData.contactName || editFormData.contactEmail) && (
+                      <Grid item xs={12}>
+                        <Box sx={{ p: 2, bgcolor: 'info.lighter', borderRadius: 1, border: '1px solid', borderColor: 'info.main' }}>
+                          <Button
+                            variant="contained"
+                            color="info"
+                            onClick={() => {
+                              if (selectedRecord) {
+                                setCreatePublisherRecord({
+                                  ...selectedRecord,
+                                  contactName: editFormData.contactName,
+                                  contactEmail: editFormData.contactEmail
+                                });
+                                setShowCreatePublisherDialog(true);
+                              }
+                            }}
+                            sx={{ mb: 1 }}
+                          >
+                            Mark as Publisher
+                          </Button>
+                          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                            This will save the contact info as publisher details. When you push this record to the LM Tool:
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary" component="ul" sx={{ mt: 0.5, pl: 2 }}>
+                            <li>If a publisher with this email already exists in LM Tool, it will be linked automatically</li>
+                            <li>If not, a new publisher will be created in the LM Tool</li>
                           </Typography>
                         </Box>
-                      </li>
+                      </Grid>
                     )}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    label="Publisher Email"
-                    value={editFormData.publisherEmail}
-                    InputProps={{ readOnly: true }}
-                    helperText="Auto-filled from publisher selection"
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    label="Publisher Name"
-                    value={editFormData.publisherName}
-                    onChange={(e) => setEditFormData({...editFormData, publisherName: e.target.value})}
-                    InputProps={{ readOnly: !!selectedPublisher }}
-                    helperText={selectedPublisher ? "Auto-filled from publisher" : "Enter manually"}
-                  />
-                </Grid>
+                  </>
+                )}
                 <Grid item xs={6} sm={3}>
                   <TextField
                     fullWidth
@@ -1411,6 +1691,68 @@ const DataFinal: React.FC = () => {
             startIcon={saving ? <CircularProgress size={16} /> : null}
           >
             {saving ? 'Saving...' : 'Save Changes'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Mark as Publisher Dialog */}
+      <Dialog open={showCreatePublisherDialog} onClose={() => setShowCreatePublisherDialog(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Mark as Publisher</DialogTitle>
+        <DialogContent sx={{ mt: 2 }}>
+          {createPublisherRecord && (
+            <Box>
+              <Alert severity="info" sx={{ mb: 2 }}>
+                This will save the contact info as publisher details for this site.
+              </Alert>
+              <Grid container spacing={2}>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    label="Site URL"
+                    value={createPublisherRecord.websiteUrl}
+                    InputProps={{ readOnly: true }}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="Publisher Name"
+                    value={createPublisherRecord.contactName || ''}
+                    InputProps={{ readOnly: true }}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="Publisher Email"
+                    value={createPublisherRecord.contactEmail || ''}
+                    InputProps={{ readOnly: true }}
+                  />
+                </Grid>
+              </Grid>
+              <Alert severity="success" sx={{ mt: 2 }}>
+                <strong>When you push this record to the LM Tool:</strong>
+                <ul style={{ margin: '8px 0 0 0', paddingLeft: '20px' }}>
+                  <li>If a publisher with this email already exists, it will be linked automatically</li>
+                  <li>If not, a new publisher will be created in the LM Tool</li>
+                  <li>Other sites with the same email will also use this publisher</li>
+                </ul>
+              </Alert>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowCreatePublisherDialog(false)} disabled={creatingPublisher}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleCreatePublisher} 
+            variant="contained" 
+            color="info"
+            disabled={creatingPublisher}
+            startIcon={creatingPublisher ? <CircularProgress size={16} /> : null}
+          >
+            {creatingPublisher ? 'Marking...' : 'Mark as Publisher'}
           </Button>
         </DialogActions>
       </Dialog>
