@@ -7,6 +7,7 @@ export interface CSVRow {
   country?: string;
   daRange?: string;
   price?: string;
+  liBasePrice?: string;         // LI Base Price from CSV
   linkType?: string;
   tat?: string;
   publisherName?: string;
@@ -18,6 +19,12 @@ export interface CSVRow {
   contactName?: string;         // Contact name if not matched
   contactEmail?: string;        // Contact email if not matched
   notes?: string;
+  // New fields for enhanced CSV upload
+  da?: number;                  // Domain Authority (0-100)
+  dr?: number;                  // Domain Rating (0-100)
+  traffic?: number;             // Monthly traffic
+  ss?: number;                  // Spam Score (0-100)
+  keywords?: number;            // Number of keywords
 }
 
 export interface ParsedCSVData {
@@ -45,6 +52,7 @@ export interface BulkDuplicateCheckResult {
     existingId?: string;
     source?: string;
     existingPrice?: number | null;
+    existingData?: any;
   }>;
   duplicateCount: number;
   uniqueCount: number;
@@ -79,6 +87,12 @@ export interface DataInProcessCreateRequest {
   publisherEmail?: string;
   publisherContact?: string;
   notes?: string;
+  // New fields for enhanced CSV upload
+  da?: number;
+  dr?: number;
+  traffic?: number;
+  ss?: number;
+  keywords?: number;
   uploadTaskId: string;
 }
 
@@ -94,6 +108,7 @@ export interface DataInProcessUpdateRequest {
   dr?: number;
   traffic?: number;
   ss?: number;
+  keywords?: number;
   category?: string;
   country?: string;
   language?: string;
@@ -104,6 +119,7 @@ export interface DataInProcessUpdateRequest {
   liBasePrice?: number;
   linkType?: string;
   notes?: string;
+  comment?: string;
   status?: 'PENDING' | 'REACHED' | 'NOT_REACHED' | 'NO_ACTION' | 'NO_ACTION_NEEDED' | 'VERIFIED' | 'REJECTED' | 'PUSHED';
 }
 

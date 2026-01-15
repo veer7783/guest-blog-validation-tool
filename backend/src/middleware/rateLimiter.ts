@@ -21,8 +21,8 @@ export const authLimiter = rateLimit({
 
 // Upload rate limiter
 export const uploadLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 10, // 10 uploads per hour
+  windowMs: parseInt(process.env.UPLOAD_RATE_LIMIT_WINDOW_MS || '3600000'), // 1 hour default
+  max: parseInt(process.env.UPLOAD_RATE_LIMIT_MAX_REQUESTS || '100'), // 100 uploads per hour (configurable)
   message: 'Too many uploads, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,

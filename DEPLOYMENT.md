@@ -546,4 +546,73 @@ For issues or questions:
 
 ---
 
-**Last Updated:** December 2, 2024
+**Last Updated:** December 18, 2024
+
+---
+
+## 🚀 Quick Deploy to cPanel (data.usehypwave.com)
+
+### Your Production Configuration:
+
+**Backend Path:** `/home/datausehypwave/public_html/api`
+**Service Name:** `datamanagement.service`
+**Frontend URL:** `https://data.usehypwave.com`
+**Backend API URL:** `https://data.usehypwave.com/api`
+
+### Backend .env (Production):
+```env
+DATABASE_URL="mysql://datausehypwave_validation:vVI.e)cyXFYK3Y,C@localhost:3306/datausehypwave_data_validation_tool"
+JWT_SECRET="16913f498ffe04d0a75d8e70736dd50e"
+PORT=5000
+NODE_ENV=production
+MAIN_PROJECT_API_URL="https://links.usehypwave.com/api/api/guest-sites-api"
+MAIN_PROJECT_SERVICE_EMAIL="validation-service@usehypwave.com"
+MAIN_PROJECT_SERVICE_PASSWORD="3310958d4b86d9a3d36030cd225f4f2da15b51f13b4eb46189f87c9cef590928"
+CORS_ORIGIN="https://data.usehypwave.com"
+```
+
+### Deploy Steps:
+
+#### 1. Build Locally:
+```bash
+# Backend
+cd backend
+npm install
+npm run build
+
+# Frontend (with production API URL)
+cd ../frontend
+$env:REACT_APP_API_URL="https://data.usehypwave.com/api"
+npm install
+npm run build
+```
+
+#### 2. Upload to Server:
+```bash
+# Upload backend dist/ folder and package.json to /home/datausehypwave/public_html/api/
+# Upload frontend build/ folder contents to /home/datausehypwave/public_html/
+```
+
+#### 3. On Server (SSH):
+```bash
+cd /home/datausehypwave/public_html/api
+
+# Install dependencies
+npm ci --only=production
+
+# Generate Prisma client
+npx prisma generate
+
+# Run migrations
+npx prisma migrate deploy
+
+# Restart service
+sudo systemctl restart datamanagement.service
+
+# Check status
+sudo systemctl status datamanagement.service
+```
+
+#### 4. Verify:
+- Frontend: https://data.usehypwave.com
+- Backend API: https://data.usehypwave.com/api/health

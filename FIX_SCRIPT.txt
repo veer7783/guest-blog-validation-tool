@@ -1,0 +1,116 @@
+MANUAL FIX INSTRUCTIONS FOR DUPLICATE COUNT ISSUE
+===================================================
+
+File: backend/src/controllers/upload.controller.ts
+
+You need to make 3 identical changes at 3 different locations.
+
+CHANGE 1: Lines 278-294
+------------------------
+FIND:
+        // Count duplicates by source - EXCLUDE price-skipped domains to avoid double counting
+        const priceUpdateUrls = new Set(priceUpdatedDomains.map(d => d.domain.toLowerCase()));
+        const priceSkippedUrls = new Set(priceSkippedDomains.map(d => d.domain.toLowerCase()));
+        
+        // Main project duplicates: only count those NOT in priceSkipped (to avoid double counting)
+        const duplicatesInMainProject = duplicateDomainsWithSource.filter(d => 
+          d.source === 'Links Management App' && 
+          !priceSkippedUrls.has(d.domain.toLowerCase()) &&
+          !priceUpdateUrls.has(d.domain.toLowerCase())
+        ).length;
+        
+        // Current system duplicates: exclude price updates AND price-skipped
+        const duplicatesInCurrentSystem = duplicateDomainsWithSource.filter(d => 
+          d.source.startsWith('Current System') && 
+          !priceUpdateUrls.has(d.domain.toLowerCase()) &&
+          !priceSkippedUrls.has(d.domain.toLowerCase())
+        ).length;
+
+REPLACE WITH:
+        // Count duplicates by source - EXCLUDE only price-updated domains
+        // Price-skipped domains should be included in their source counts
+        const priceUpdateUrls = new Set(priceUpdatedDomains.map(d => d.domain.toLowerCase()));
+        
+        // Main project duplicates: exclude only price updates (include price-skipped)
+        const duplicatesInMainProject = duplicateDomainsWithSource.filter(d => 
+          d.source === 'Links Management App' && 
+          !priceUpdateUrls.has(d.domain.toLowerCase())
+        ).length;
+        
+        // Current system duplicates: exclude only price updates (include price-skipped)
+        const duplicatesInCurrentSystem = duplicateDomainsWithSource.filter(d => 
+          d.source.startsWith('Current System') && 
+          !priceUpdateUrls.has(d.domain.toLowerCase())
+        ).length;
+
+
+CHANGE 2: Lines 365-372
+------------------------
+FIND:
+        // Exclude price updates AND price-skipped from current system duplicates count (they're counted separately)
+        const priceUpdateUrls = new Set(priceUpdatedDomains.map(d => d.domain.toLowerCase()));
+        const priceSkippedUrls = new Set(priceSkippedDomains.map(d => d.domain.toLowerCase()));
+        const duplicatesInCurrentSystem = duplicateDomainsWithSource.filter(d => 
+          d.source.startsWith('Current System') && 
+          !priceUpdateUrls.has(d.domain.toLowerCase()) &&
+          !priceSkippedUrls.has(d.domain.toLowerCase())
+        ).length;
+
+REPLACE WITH:
+        // Exclude only price updates from current system duplicates count
+        const priceUpdateUrls = new Set(priceUpdatedDomains.map(d => d.domain.toLowerCase()));
+        const duplicatesInCurrentSystem = duplicateDomainsWithSource.filter(d => 
+          d.source.startsWith('Current System') && 
+          !priceUpdateUrls.has(d.domain.toLowerCase())
+        ).length;
+
+
+CHANGE 3: Lines 593-609
+------------------------
+FIND:
+      // Count duplicates by source - EXCLUDE price-skipped domains to avoid double counting
+      const priceUpdateUrls = new Set(priceUpdatedDomains.map(d => d.domain.toLowerCase()));
+      const priceSkippedUrls = new Set(priceSkippedDomains.map(d => d.domain.toLowerCase()));
+      
+      // Main project duplicates: only count those NOT in priceSkipped (to avoid double counting)
+      const duplicatesInMainProject = duplicateDomainsWithSource.filter(d => 
+        d.source === 'Links Management App' && 
+        !priceSkippedUrls.has(d.domain.toLowerCase()) &&
+        !priceUpdateUrls.has(d.domain.toLowerCase())
+      ).length;
+      
+      // Current system duplicates: exclude price updates AND price-skipped
+      const duplicatesInCurrentSystem = duplicateDomainsWithSource.filter(d => 
+        d.source.startsWith('Current System') && 
+        !priceUpdateUrls.has(d.domain.toLowerCase()) &&
+        !priceSkippedUrls.has(d.domain.toLowerCase())
+      ).length;
+
+REPLACE WITH:
+      // Count duplicates by source - EXCLUDE only price-updated domains
+      // Price-skipped domains should be included in their source counts
+      const priceUpdateUrls = new Set(priceUpdatedDomains.map(d => d.domain.toLowerCase()));
+      
+      // Main project duplicates: exclude only price updates (include price-skipped)
+      const duplicatesInMainProject = duplicateDomainsWithSource.filter(d => 
+        d.source === 'Links Management App' && 
+        !priceUpdateUrls.has(d.domain.toLowerCase())
+      ).length;
+      
+      // Current system duplicates: exclude only price updates (include price-skipped)
+      const duplicatesInCurrentSystem = duplicateDomainsWithSource.filter(d => 
+        d.source.startsWith('Current System') && 
+        !priceUpdateUrls.has(d.domain.toLowerCase())
+      ).length;
+
+
+SUMMARY OF CHANGES:
+===================
+1. Remove line: const priceSkippedUrls = new Set(...)
+2. Remove: !priceSkippedUrls.has(d.domain.toLowerCase()) && from both filters
+3. Update comments to reflect new logic
+
+After making these changes:
+1. Save the file
+2. Restart backend: npm run dev
+3. Test upload - should show "Skipped: 4" not "Skipped: 5"

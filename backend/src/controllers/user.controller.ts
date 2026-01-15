@@ -5,6 +5,33 @@ import { getClientIp } from '../utils/helpers';
 
 export class UserController {
   /**
+   * Create a new user (Super Admin only)
+   */
+  static async createUser(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { firstName, lastName, email, password, role, assignedAdminId } = req.body;
+      const ipAddress = getClientIp(req);
+      const userAgent = req.headers['user-agent'] || null;
+      const createdBy = req.user!.id;
+
+      const user = await UserService.createUser(
+        { firstName, lastName, email, password, role, assignedAdminId },
+        createdBy,
+        ipAddress,
+        userAgent
+      );
+
+      res.status(201).json({
+        success: true,
+        message: 'User created successfully',
+        data: user
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
    * Get all users
    */
   static async getAllUsers(req: AuthRequest, res: Response, next: NextFunction) {
@@ -60,6 +87,8 @@ export class UserController {
       const data: UpdateUserRequest = req.body;
       const updatedBy = req.user!.id;
       const ipAddress = getClientIp(req);
+      
+      console.log('Update user request body:', JSON.stringify(req.body, null, 2));
       const userAgent = req.headers['user-agent'] || null;
 
       const user = await UserService.updateUser(id, data, updatedBy, ipAddress, userAgent);

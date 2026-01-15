@@ -35,14 +35,19 @@ export class AuthController {
       const ipAddress = getClientIp(req);
       const userAgent = req.headers['user-agent'] || null;
 
+      console.log('🔐 Login attempt:', { email: data.email, ip: ipAddress });
+
       const result = await AuthService.login(data, ipAddress, userAgent);
+
+      console.log('✅ Login successful for:', data.email);
 
       res.status(200).json({
         success: true,
         message: 'Login successful',
         data: result
       });
-    } catch (error) {
+    } catch (error: any) {
+      console.log('❌ Login failed - Error:', error.message);
       next(error);
     }
   }

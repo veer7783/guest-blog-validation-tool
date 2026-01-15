@@ -20,6 +20,9 @@ router.get('/:id', DataInProcessController.getById);
 // Update data in process
 router.put('/:id', DataInProcessController.update);
 
+// Update publisher information (Super Admin only)
+router.put('/:id/publisher', isSuperAdmin, DataInProcessController.updatePublisher);
+
 // Push to main project (Super Admin only)
 router.post('/push', isSuperAdmin, DataInProcessController.pushToMainProject);
 

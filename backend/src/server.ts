@@ -7,6 +7,7 @@ import path from 'path';
 import { errorHandler } from './middleware/errorHandler';
 import { notFoundHandler } from './middleware/notFoundHandler';
 import { apiLimiter } from './middleware/rateLimiter';
+import { SchedulerService } from './services/scheduler.service';
 
 // Import routes
 import authRoutes from './routes/auth.routes';
@@ -107,6 +108,22 @@ app.listen(PORT, () => {
 ║  Time: ${new Date().toLocaleString()}                      ║
 ╚════════════════════════════════════════════════════════════╝
   `);
+  
+  // Start automatic publisher sync (runs every 2 minutes)
+  SchedulerService.startPublisherSync();
+});
+
+// Handle graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('\n[Server] SIGTERM signal received: closing HTTP server');
+  SchedulerService.stopPublisherSync();
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('\n[Server] SIGINT signal received: closing HTTP server');
+  SchedulerService.stopPublisherSync();
+  process.exit(0);
 });
 
 export default app;

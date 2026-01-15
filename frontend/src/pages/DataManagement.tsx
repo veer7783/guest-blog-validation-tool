@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { API_BASE_URL } from '../config';
 import {
   Card,
   CardContent,
@@ -27,7 +28,9 @@ import {
   TextField,
   Grid,
   Tooltip,
-  Autocomplete
+  Autocomplete,
+  TableSortLabel,
+  Link
 } from '@mui/material';
 import RemoveRedEyeIcon from '@mui/icons-material/RemoveRedEye';
 import EditIcon from '@mui/icons-material/Edit';
@@ -334,6 +337,7 @@ interface DataInProcess {
   dr?: number;
   traffic?: number;
   ss?: number;
+  keywords?: number;
   category?: string;
   country?: string;
   language?: string;
@@ -342,7 +346,15 @@ interface DataInProcess {
   gbBasePrice?: number;
   liBasePrice?: number;
   status: string;
+  comment?: string;
   createdAt: string;
+  updatedAt?: string;
+  lastModifiedBy?: string;
+  lastModifiedByUser?: {
+    firstName: string;
+    lastName: string;
+    email: string;
+  };
   uploadTask?: {
     fileName: string;
     assignedTo: string;
@@ -374,9 +386,10 @@ const DataManagement: React.FC = () => {
   
   // Search and filter state
   const [searchText, setSearchText] = useState('');
-  const [filterAssignedTo, setFilterAssignedTo] = useState<string>('');
+  const [filterAssignedTo, setFilterAssignedTo] = useState('');
   const [users, setUsers] = useState<User[]>([]);
-  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [sortBy, setSortBy] = useState<'url' | 'price' | 'status' | 'lastModified'>('url');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   
   // Pagination state
   const [page, setPage] = useState(0);
@@ -400,13 +413,15 @@ const DataManagement: React.FC = () => {
     dr: '',
     traffic: '',
     ss: '',
+    keywords: '',
     gbBasePrice: '',
     liBasePrice: '',
     category: '',
     country: '',
     language: '',
     tat: '',
-    status: ''
+    status: '',
+    comment: ''
   });
 
   // Fetch publishers from main project
@@ -414,7 +429,7 @@ const DataManagement: React.FC = () => {
     setLoadingPublishers(true);
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.get('http://localhost:5000/api/publishers', {
+      const response = await axios.get(`${API_BASE_URL}/publishers`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (response.data.success) {
@@ -428,11 +443,12 @@ const DataManagement: React.FC = () => {
   }, []);
 
   // Fetch users for filter dropdown
+  const [loadingUsers, setLoadingUsers] = useState(false);
   const fetchUsers = useCallback(async () => {
     setLoadingUsers(true);
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.get('http://localhost:5000/api/users', {
+      const response = await axios.get(`${API_BASE_URL}/users`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (response.data.success) {
@@ -477,7 +493,7 @@ const DataManagement: React.FC = () => {
     
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.get('http://localhost:5000/api/data-in-process', {
+      const response = await axios.get(`${API_BASE_URL}/data-in-process`, {
         headers: {
           Authorization: `Bearer ${token}`
         }
@@ -560,13 +576,15 @@ const DataManagement: React.FC = () => {
       dr: record.dr?.toString() || '',
       traffic: record.traffic?.toString() || '',
       ss: record.ss?.toString() || '',
+      keywords: record.keywords?.toString() || '',
       gbBasePrice: (record.price || record.gbBasePrice)?.toString() || '',
       liBasePrice: record.liBasePrice?.toString() || '',
       category: record.category || '',
       country: record.country || '',
       language: record.language || '',
       tat: record.tat || '',
-      status: record.status
+      status: record.status,
+      comment: record.comment || ''
     });
     // Find matching publisher from list (if publisher was matched)
     if (record.publisherMatched && record.publisherId) {
@@ -606,7 +624,7 @@ const DataManagement: React.FC = () => {
     try {
       const token = localStorage.getItem('token');
       const response = await axios.post(
-        'http://localhost:5000/api/publishers',
+        `${API_BASE_URL}/publishers`,
         {
           name: name || email?.split('@')[0] || 'Unknown',
           email: email,
@@ -656,7 +674,7 @@ const DataManagement: React.FC = () => {
 
     try {
       const token = localStorage.getItem('token');
-      await axios.delete(`http://localhost:5000/api/data-in-process/${id}`, {
+      await axios.delete(`${API_BASE_URL}/data-in-process/${id}`, {
         headers: {
           Authorization: `Bearer ${token}`
         }
@@ -679,6 +697,9 @@ const DataManagement: React.FC = () => {
       return;
     }
 
+    // Comment is now optional for NO_ACTION_NEEDED and NOT_REACHED statuses
+    // No validation needed - users can choose to add a comment or not
+
     setSaving(true);
     try {
       const token = localStorage.getItem('token');
@@ -695,6 +716,7 @@ const DataManagement: React.FC = () => {
         dr: editFormData.dr ? parseInt(editFormData.dr) : undefined,
         traffic: editFormData.traffic ? parseInt(editFormData.traffic) : undefined,
         ss: editFormData.ss ? parseInt(editFormData.ss) : undefined,
+        keywords: editFormData.keywords ? parseInt(editFormData.keywords) : undefined,
         price: editFormData.gbBasePrice ? parseFloat(editFormData.gbBasePrice) : undefined,
         gbBasePrice: editFormData.gbBasePrice ? parseFloat(editFormData.gbBasePrice) : undefined,
         liBasePrice: editFormData.liBasePrice ? parseFloat(editFormData.liBasePrice) : undefined,
@@ -702,11 +724,12 @@ const DataManagement: React.FC = () => {
         country: editFormData.country,
         language: editFormData.language,
         tat: editFormData.tat,
-        status: editFormData.status
+        status: editFormData.status,
+        comment: editFormData.comment || undefined
       };
 
       const response = await axios.put(
-        `http://localhost:5000/api/data-in-process/${selectedRecord.id}`,
+        `${API_BASE_URL}/data-in-process/${selectedRecord.id}`,
         updateData,
         {
           headers: {
@@ -770,21 +793,65 @@ const DataManagement: React.FC = () => {
     }
   };
 
-  // Filter data based on search text and assigned user
-  const filteredData = data.filter((row) => {
-    // Search filter - check website URL
-    const matchesSearch = searchText === '' || 
-      row.websiteUrl.toLowerCase().includes(searchText.toLowerCase());
-    
-    // Assigned user filter
-    const matchesAssignedTo = filterAssignedTo === '' || 
-      row.uploadTask?.assignedTo === filterAssignedTo;
-    
-    return matchesSearch && matchesAssignedTo;
-  });
+  // Filter and sort data based on search text, assigned user, and sort options
+  const filteredAndSortedData = data
+    .filter((row) => {
+      // Search filter - check website URL
+      const matchesSearch = searchText === '' || 
+        row.websiteUrl.toLowerCase().includes(searchText.toLowerCase());
+      
+      // Assigned user filter
+      const matchesAssignedTo = filterAssignedTo === '' || 
+        row.uploadTask?.assignedTo === filterAssignedTo;
+      
+      return matchesSearch && matchesAssignedTo;
+    })
+    .sort((a, b) => {
+      let aValue: string | number;
+      let bValue: string | number;
+      
+      if (sortBy === 'url') {
+        // Extract domain from URL for sorting
+        aValue = a.websiteUrl.replace(/^https?:\/\/(www\.)?/, '').toLowerCase();
+        bValue = b.websiteUrl.replace(/^https?:\/\/(www\.)?/, '').toLowerCase();
+      } else if (sortBy === 'price') {
+        aValue = a.price || a.gbBasePrice || 0;
+        bValue = b.price || b.gbBasePrice || 0;
+      } else if (sortBy === 'status') {
+        // Define status priority for sorting
+        const statusPriority = {
+          'PENDING': 1,
+          'REACHED': 2,
+          'NOT_REACHED': 3,
+          'NO_ACTION_NEEDED': 4
+        };
+        aValue = statusPriority[a.status as keyof typeof statusPriority] || 5;
+        bValue = statusPriority[b.status as keyof typeof statusPriority] || 5;
+      } else { // lastModified
+        // Sort by updatedAt date
+        aValue = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+        bValue = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+      }
+      
+      if (sortOrder === 'asc') {
+        return aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
+      } else {
+        return aValue > bValue ? -1 : aValue < bValue ? 1 : 0;
+      }
+    });
 
   // Paginated data
-  const paginatedData = filteredData.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
+  const paginatedData = filteredAndSortedData.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
+  
+  // Handle sort
+  const handleSort = (column: 'url' | 'price' | 'status' | 'lastModified') => {
+    if (sortBy === column) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(column);
+      setSortOrder('asc');
+    }
+  };
 
   // Handle page change
   const handleChangePage = (_event: unknown, newPage: number) => {
@@ -863,7 +930,7 @@ const DataManagement: React.FC = () => {
             )}
             
             <Typography variant="body2" color="text.secondary" sx={{ ml: 'auto' }}>
-              Showing {Math.min(rowsPerPage, filteredData.length)} of {filteredData.length} records
+              Showing {Math.min(rowsPerPage, filteredAndSortedData.length)} of {filteredAndSortedData.length} records
             </Typography>
           </Box>
 
@@ -877,7 +944,7 @@ const DataManagement: React.FC = () => {
                 No data available. Upload a CSV file to get started.
               </Typography>
             </Box>
-          ) : filteredData.length === 0 ? (
+          ) : filteredAndSortedData.length === 0 ? (
             <Box sx={{ textAlign: 'center', py: 8 }}>
               <Typography variant="body1" color="text.secondary">
                 No records match your search criteria.
@@ -896,7 +963,15 @@ const DataManagement: React.FC = () => {
                 <TableHead>
                   <TableRow sx={{ bgcolor: '#f5f5f5' }}>
                     <TableCell align="center" sx={{ width: 50 }}><strong>Edit</strong></TableCell>
-                    <TableCell><strong>Site URL</strong></TableCell>
+                    <TableCell>
+                      <TableSortLabel
+                        active={sortBy === 'url'}
+                        direction={sortBy === 'url' ? sortOrder : 'asc'}
+                        onClick={() => handleSort('url')}
+                      >
+                        <strong>Site URL</strong>
+                      </TableSortLabel>
+                    </TableCell>
                     {userRole === 'SUPER_ADMIN' && <TableCell><strong>Publisher</strong></TableCell>}
                     {userRole === 'SUPER_ADMIN' && <TableCell><strong>Publisher Email</strong></TableCell>}
                     <TableCell><strong>Contact Name</strong></TableCell>
@@ -905,21 +980,62 @@ const DataManagement: React.FC = () => {
                     <TableCell><strong>DR</strong></TableCell>
                     <TableCell><strong>Traffic</strong></TableCell>
                     <TableCell><strong>SS</strong></TableCell>
-                    {userRole === 'SUPER_ADMIN' && <TableCell><strong>GB Base Price</strong></TableCell>}
+                    <TableCell><strong>Keywords</strong></TableCell>
+                    {userRole === 'SUPER_ADMIN' && (
+                      <TableCell>
+                        <TableSortLabel
+                          active={sortBy === 'price'}
+                          direction={sortBy === 'price' ? sortOrder : 'asc'}
+                          onClick={() => handleSort('price')}
+                        >
+                          <strong>GB Base Price</strong>
+                        </TableSortLabel>
+                      </TableCell>
+                    )}
                     {userRole === 'SUPER_ADMIN' && <TableCell><strong>LI Base Price</strong></TableCell>}
                     <TableCell><strong>Category</strong></TableCell>
                     <TableCell><strong>Country</strong></TableCell>
                     <TableCell><strong>Language</strong></TableCell>
                     <TableCell><strong>TAT</strong></TableCell>
-                    <TableCell><strong>Status</strong></TableCell>
-                    <TableCell><strong>Last Modified By</strong></TableCell>
+                    <TableCell>
+                      <TableSortLabel
+                        active={sortBy === 'status'}
+                        direction={sortBy === 'status' ? sortOrder : 'asc'}
+                        onClick={() => handleSort('status')}
+                      >
+                        <strong>Status</strong>
+                      </TableSortLabel>
+                    </TableCell>
+                    <TableCell><strong>Comment</strong></TableCell>
+                    <TableCell>
+                      <TableSortLabel
+                        active={sortBy === 'lastModified'}
+                        direction={sortBy === 'lastModified' ? sortOrder : 'asc'}
+                        onClick={() => handleSort('lastModified')}
+                      >
+                        <strong>Last Modified</strong>
+                      </TableSortLabel>
+                    </TableCell>
                     {userRole === 'SUPER_ADMIN' && <TableCell><strong>Assigned To</strong></TableCell>}
                     <TableCell align="center"><strong>Actions</strong></TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {paginatedData.map((row) => (
-                    <TableRow key={row.id} hover>
+                    <TableRow 
+                      key={row.id} 
+                      hover
+                      sx={{
+                        backgroundColor: (row.status === 'NO_ACTION_NEEDED' || row.status === 'NOT_REACHED') 
+                          ? 'rgba(0, 0, 0, 0.04)' 
+                          : 'inherit',
+                        '&:hover': {
+                          backgroundColor: (row.status === 'NO_ACTION_NEEDED' || row.status === 'NOT_REACHED') 
+                            ? 'rgba(0, 0, 0, 0.08)' 
+                            : 'rgba(0, 0, 0, 0.04)'
+                        }
+                      }}
+                    >
                       <TableCell align="center" sx={{ width: 50 }}>
                         <Tooltip title="Edit">
                           <IconButton 
@@ -998,6 +1114,9 @@ const DataManagement: React.FC = () => {
                       <TableCell>
                         {row.ss || <Typography variant="caption" color="text.secondary">-</Typography>}
                       </TableCell>
+                      <TableCell>
+                        {row.keywords || <Typography variant="caption" color="text.secondary">-</Typography>}
+                      </TableCell>
                       {userRole === 'SUPER_ADMIN' && (
                         <TableCell>
                           {row.price || row.gbBasePrice ? `$${row.price || row.gbBasePrice}` : <Typography variant="caption" color="text.secondary">-</Typography>}
@@ -1031,9 +1150,42 @@ const DataManagement: React.FC = () => {
                         </Box>
                       </TableCell>
                       <TableCell>
-                        <Typography variant="caption" color="text.secondary">
-                          {(row as any).lastModifiedByName || 'Not modified'}
-                        </Typography>
+                        {row.comment ? (
+                          <Typography variant="caption" color="text.secondary" sx={{ 
+                            maxWidth: 200, 
+                            overflow: 'hidden', 
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            display: 'block'
+                          }}>
+                            {row.comment}
+                          </Typography>
+                        ) : (
+                          <Typography variant="caption" color="text.secondary">-</Typography>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Box>
+                          <Typography variant="caption" color="text.secondary">
+                            {/* Check multiple possible field names for user info */}
+                            {row.lastModifiedByUser 
+                              ? `${row.lastModifiedByUser.firstName} ${row.lastModifiedByUser.lastName}`
+                              : (row as any).lastModifiedBy?.firstName && (row as any).lastModifiedBy?.lastName
+                              ? `${(row as any).lastModifiedBy.firstName} ${(row as any).lastModifiedBy.lastName}`
+                              : (row as any).lastModifiedByName 
+                              ? (row as any).lastModifiedByName
+                              : (row as any).modifiedBy
+                              ? (row as any).modifiedBy
+                              : row.updatedAt 
+                              ? 'Modified'
+                              : 'Not modified'}
+                          </Typography>
+                          {row.updatedAt && (
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', fontSize: '0.7rem' }}>
+                              {formatDate(row.updatedAt)}
+                            </Typography>
+                          )}
+                        </Box>
                       </TableCell>
                       {userRole === 'SUPER_ADMIN' && (
                         <TableCell>
@@ -1075,10 +1227,10 @@ const DataManagement: React.FC = () => {
           )}
           
           {/* Pagination - show when data exists */}
-          {filteredData.length > 0 && (
+          {filteredAndSortedData.length > 0 && (
             <TablePagination
               component="div"
-              count={filteredData.length}
+              count={filteredAndSortedData.length}
               page={page}
               onPageChange={handleChangePage}
               rowsPerPage={rowsPerPage}
@@ -1145,11 +1297,19 @@ const DataManagement: React.FC = () => {
                   InputProps={{ readOnly: true }}
                 />
               </Grid>
-              <Grid item xs={12}>
+              <Grid item xs={6}>
                 <TextField
                   fullWidth
                   label="Created At"
                   value={formatDate(selectedRecord.createdAt)}
+                  InputProps={{ readOnly: true }}
+                />
+              </Grid>
+              <Grid item xs={6}>
+                <TextField
+                  fullWidth
+                  label="Last Modified"
+                  value={selectedRecord.updatedAt ? formatDate(selectedRecord.updatedAt) : 'Not modified'}
                   InputProps={{ readOnly: true }}
                 />
               </Grid>
@@ -1162,13 +1322,37 @@ const DataManagement: React.FC = () => {
       </Dialog>
 
       {/* Edit Dialog */}
-      <Dialog open={showEditDialog} onClose={() => setShowEditDialog(false)} maxWidth="md" fullWidth>
+      <Dialog 
+        open={showEditDialog} 
+        onClose={() => {}} 
+        maxWidth="md" 
+        fullWidth
+        disableEscapeKeyDown
+      >
         <DialogTitle>Edit Record</DialogTitle>
         <DialogContent sx={{ mt: 2 }}>
           {selectedRecord && (
             <Box>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                Site URL: <strong>{selectedRecord.websiteUrl}</strong> (Non-editable)
+                Site URL: 
+                <Link 
+                  href={selectedRecord.websiteUrl.startsWith('http') ? selectedRecord.websiteUrl : `https://${selectedRecord.websiteUrl}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  sx={{ 
+                    fontWeight: 'bold',
+                    ml: 1,
+                    textDecoration: 'none',
+                    '&:hover': {
+                      textDecoration: 'underline'
+                    }
+                  }}
+                >
+                  {selectedRecord.websiteUrl}
+                </Link>
+                <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                  (Non-editable)
+                </Typography>
               </Typography>
               
               <Grid container spacing={2}>
@@ -1185,7 +1369,7 @@ const DataManagement: React.FC = () => {
                         fullWidth
                         label="Publisher Name"
                         value={editFormData.publisherName}
-                        InputProps={{ readOnly: true }}
+                        onChange={(e) => setEditFormData({...editFormData, publisherName: e.target.value})}
                       />
                     </Grid>
                     <Grid item xs={12} sm={6}>
@@ -1193,7 +1377,7 @@ const DataManagement: React.FC = () => {
                         fullWidth
                         label="Publisher Email"
                         value={editFormData.publisherEmail || ''}
-                        InputProps={{ readOnly: true }}
+                        onChange={(e) => setEditFormData({...editFormData, publisherEmail: e.target.value})}
                       />
                     </Grid>
                   </>
@@ -1251,7 +1435,8 @@ const DataManagement: React.FC = () => {
                     )}
                   </>
                 )}
-                <Grid item xs={6} sm={3}>
+                {/* First row - DA, DR, Traffic */}
+                <Grid item xs={4}>
                   <TextField
                     fullWidth
                     label="DA"
@@ -1261,7 +1446,7 @@ const DataManagement: React.FC = () => {
                     inputProps={{ min: 0, max: 100 }}
                   />
                 </Grid>
-                <Grid item xs={6} sm={3}>
+                <Grid item xs={4}>
                   <TextField
                     fullWidth
                     required
@@ -1274,7 +1459,7 @@ const DataManagement: React.FC = () => {
                     helperText={!editFormData.dr ? 'Required' : ''}
                   />
                 </Grid>
-                <Grid item xs={6} sm={3}>
+                <Grid item xs={4}>
                   <TextField
                     fullWidth
                     required
@@ -1286,7 +1471,8 @@ const DataManagement: React.FC = () => {
                     helperText={!editFormData.traffic ? 'Required' : ''}
                   />
                 </Grid>
-                <Grid item xs={6} sm={3}>
+                {/* Second row - SS, Keywords */}
+                <Grid item xs={6}>
                   <TextField
                     fullWidth
                     label="SS"
@@ -1294,6 +1480,16 @@ const DataManagement: React.FC = () => {
                     value={editFormData.ss}
                     onChange={(e) => setEditFormData({...editFormData, ss: e.target.value})}
                     inputProps={{ min: 0, max: 100 }}
+                  />
+                </Grid>
+                <Grid item xs={6}>
+                  <TextField
+                    fullWidth
+                    label="Keywords"
+                    type="number"
+                    value={editFormData.keywords}
+                    onChange={(e) => setEditFormData({...editFormData, keywords: e.target.value})}
+                    inputProps={{ min: 0 }}
                   />
                 </Grid>
                 {userRole === 'SUPER_ADMIN' && (
@@ -1414,9 +1610,43 @@ const DataManagement: React.FC = () => {
                 </Grid>
               </Grid>
               
+              {/* Comment field - shown when No Action Needed or Not Reached is selected */}
+              {(editFormData.status === 'NO_ACTION_NEEDED' || editFormData.status === 'NOT_REACHED') && (
+                <Grid container spacing={2} sx={{ mt: 1 }}>
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      multiline
+                      rows={3}
+                      label="Comment (Optional)"
+                      value={editFormData.comment}
+                      onChange={(e) => setEditFormData({...editFormData, comment: e.target.value})}
+                      placeholder={
+                        editFormData.status === 'NO_ACTION_NEEDED' 
+                          ? "Optional: Provide a reason for marking this as 'No Action Needed'..."
+                          : "Optional: Provide details about why this site was not reached..."
+                      }
+                      helperText="You can optionally add a comment to provide additional context."
+                    />
+                  </Grid>
+                </Grid>
+              )}
+              
               {editFormData.status === 'REACHED' && (
                 <Alert severity="info" sx={{ mt: 2 }}>
                   <strong>Note:</strong> Marking as "Reached" will move this record to Data Final page.
+                </Alert>
+              )}
+              
+              {editFormData.status === 'NO_ACTION_NEEDED' && (
+                <Alert severity="info" sx={{ mt: 2 }}>
+                  <strong>Note:</strong> You can optionally add a comment explaining why no action is needed for this record.
+                </Alert>
+              )}
+              
+              {editFormData.status === 'NOT_REACHED' && (
+                <Alert severity="info" sx={{ mt: 2 }}>
+                  <strong>Note:</strong> You can optionally add a comment explaining why this site could not be reached.
                 </Alert>
               )}
             </Box>

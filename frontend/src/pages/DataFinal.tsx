@@ -1,35 +1,37 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { API_BASE_URL } from '../config';
 import {
+  Box,
+  Typography,
   Card,
   CardContent,
-  Typography,
-  Box,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
   TableRow,
-  TablePagination,
-  Chip,
-  CircularProgress,
-  Alert,
   IconButton,
+  Button,
   Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
-  Button,
+  TextField,
+  Grid,
+  Chip,
+  CircularProgress,
+  Alert,
+  Tooltip,
+  Checkbox,
+  TablePagination,
   FormControl,
   InputLabel,
   Select,
   MenuItem,
-  TextField,
-  Grid,
-  Tooltip,
-  Checkbox,
-  Autocomplete
+  Autocomplete,
+  Divider
 } from '@mui/material';
 import RemoveRedEyeIcon from '@mui/icons-material/RemoveRedEye';
 import EditIcon from '@mui/icons-material/Edit';
@@ -337,6 +339,7 @@ interface DataFinalRecord {
   dr?: number;
   traffic?: number;
   ss?: number;
+  keywords?: number;
   category?: string;
   country?: string;
   language?: string;
@@ -385,6 +388,18 @@ const DataFinal: React.FC = () => {
   const [showCreatePublisherDialog, setShowCreatePublisherDialog] = useState(false);
   const [createPublisherRecord, setCreatePublisherRecord] = useState<DataFinalRecord | null>(null);
   
+  // Export state
+  const [showExportDialog, setShowExportDialog] = useState(false);
+  const [exportPublishers, setExportPublishers] = useState<Array<{
+    id: string;
+    email: string;
+    name: string;
+    isMatched: boolean;
+    recordCount: number;
+  }>>([]);
+  const [selectedExportPublisher, setSelectedExportPublisher] = useState<string>('');
+  const [exporting, setExporting] = useState(false);
+  
   // Publisher state
   const [publishers, setPublishers] = useState<Publisher[]>([]);
   const [loadingPublishers, setLoadingPublishers] = useState(false);
@@ -401,6 +416,7 @@ const DataFinal: React.FC = () => {
     dr: '',
     traffic: '',
     ss: '',
+    keywords: '',
     category: '',
     country: '',
     language: '',
@@ -416,7 +432,7 @@ const DataFinal: React.FC = () => {
     setLoadingPublishers(true);
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.get('http://localhost:5000/api/publishers', {
+      const response = await axios.get(`${API_BASE_URL}/publishers`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (response.data.success) {
@@ -428,6 +444,21 @@ const DataFinal: React.FC = () => {
       setLoadingPublishers(false);
     }
   }, []);
+
+  // Fetch publishers for export dropdown
+  const fetchExportPublishers = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.get(`${API_BASE_URL}/data-final/publishers/list`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (response.data.success) {
+        setExportPublishers(response.data.data || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch export publishers:', err);
+    }
+  };
 
   // Handle publisher selection - auto-fill email and name
   const handlePublisherChange = (publisher: Publisher | null) => {
@@ -446,6 +477,7 @@ const DataFinal: React.FC = () => {
     fetchPublishers();
     if (user?.role === 'SUPER_ADMIN') {
       fetchUsers();
+      fetchExportPublishers();
     }
   }, [fetchPublishers]);
 
@@ -456,7 +488,7 @@ const DataFinal: React.FC = () => {
   const fetchUsers = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.get('http://localhost:5000/api/users?limit=100', {
+      const response = await axios.get(`${API_BASE_URL}/users?limit=100`, {
         headers: {
           Authorization: `Bearer ${token}`
         }
@@ -472,7 +504,7 @@ const DataFinal: React.FC = () => {
       setLoading(true);
       const token = localStorage.getItem('token');
       
-      let url = 'http://localhost:5000/api/data-final';
+      let url = `${API_BASE_URL}/data-final`;
       if (filterByUser !== 'all') {
         url += `?reachedBy=${filterByUser}`;
       }
@@ -484,6 +516,13 @@ const DataFinal: React.FC = () => {
       });
 
       const result = response.data.data;
+      console.log('[DataFinal] Fetched data sample:', result.data?.[0]);
+      console.log('[DataFinal] Price fields check:', {
+        hasGbBasePrice: result.data?.[0]?.gbBasePrice !== undefined,
+        hasLiBasePrice: result.data?.[0]?.liBasePrice !== undefined,
+        gbBasePriceValue: result.data?.[0]?.gbBasePrice,
+        liBasePriceValue: result.data?.[0]?.liBasePrice
+      });
       setData(result.data || []);
       setError('');
     } catch (err: any) {
@@ -511,6 +550,7 @@ const DataFinal: React.FC = () => {
       dr: record.dr?.toString() || '',
       traffic: record.traffic?.toString() || '',
       ss: record.ss?.toString() || '',
+      keywords: record.keywords?.toString() || '',
       category: record.category || '',
       country: record.country || '',
       language: record.language || '',
@@ -535,7 +575,7 @@ const DataFinal: React.FC = () => {
 
     try {
       const token = localStorage.getItem('token');
-      await axios.delete(`http://localhost:5000/api/data-final/${id}`, {
+      await axios.delete(`${API_BASE_URL}/data-final/${id}`, {
         headers: {
           Authorization: `Bearer ${token}`
         }
@@ -566,6 +606,7 @@ const DataFinal: React.FC = () => {
         dr: editFormData.dr ? parseInt(editFormData.dr) : undefined,
         traffic: editFormData.traffic ? parseInt(editFormData.traffic) : undefined,
         ss: editFormData.ss ? parseInt(editFormData.ss) : undefined,
+        keywords: editFormData.keywords ? parseInt(editFormData.keywords) : undefined,
         category: editFormData.category,
         country: editFormData.country,
         language: editFormData.language,
@@ -577,7 +618,7 @@ const DataFinal: React.FC = () => {
       };
 
       const response = await axios.put(
-        `http://localhost:5000/api/data-final/${selectedRecord.id}`,
+        `${API_BASE_URL}/data-final/${selectedRecord.id}`,
         updateData,
         {
           headers: {
@@ -621,7 +662,7 @@ const DataFinal: React.FC = () => {
     try {
       const token = localStorage.getItem('token');
       const response = await axios.post(
-        'http://localhost:5000/api/publishers',
+        `${API_BASE_URL}/publishers`,
         {
           name: name || email?.split('@')[0] || 'Unknown',
           email: email,
@@ -706,7 +747,7 @@ const DataFinal: React.FC = () => {
     try {
       const token = localStorage.getItem('token');
       const deletePromises = Array.from(selectedIds).map(id =>
-        axios.delete(`http://localhost:5000/api/data-final/${id}`, {
+        axios.delete(`${API_BASE_URL}/data-final/${id}`, {
           headers: { Authorization: `Bearer ${token}` }
         })
       );
@@ -757,7 +798,7 @@ const DataFinal: React.FC = () => {
     try {
       const token = localStorage.getItem('token');
       const response = await axios.post(
-        'http://localhost:5000/api/data-final/push-to-main-project',
+        `${API_BASE_URL}/data-final/push-to-main-project`,
         { recordIds: Array.from(selectedIds) },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -792,6 +833,53 @@ const DataFinal: React.FC = () => {
     }
   };
 
+  // Handle publisher export
+  const handleExportByPublisher = async () => {
+    if (!selectedExportPublisher) {
+      setError('Please select a publisher to export');
+      return;
+    }
+
+    setExporting(true);
+    setError('');
+    try {
+      const token = localStorage.getItem('token');
+      const selectedPublisher = exportPublishers.find(p => p.email === selectedExportPublisher);
+      
+      const response = await axios.get(
+        `${API_BASE_URL}/data-final/export/publisher?publisherEmail=${encodeURIComponent(selectedExportPublisher)}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          responseType: 'blob'
+        }
+      );
+
+      // Create download link
+      const blob = new Blob([response.data], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      
+      const publisherName = selectedPublisher?.name || 'Unknown';
+      const sanitizedName = publisherName.replace(/[^a-zA-Z0-9]/g, '_');
+      link.download = `publisher_${sanitizedName}_export_${new Date().toISOString().split('T')[0]}.csv`;
+      
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      setSuccess(`Successfully exported ${selectedPublisher?.recordCount || 0} records for ${publisherName}`);
+      setShowExportDialog(false);
+      setSelectedExportPublisher('');
+    } catch (err: any) {
+      console.error('Export error:', err);
+      setError(err.response?.data?.message || 'Failed to export data');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const handlePushAll = async () => {
     const unpushedRecords = data.filter(d => !d.mainProjectId);
     const unpushedCount = unpushedRecords.length;
@@ -819,7 +907,7 @@ const DataFinal: React.FC = () => {
     try {
       const token = localStorage.getItem('token');
       const response = await axios.post(
-        'http://localhost:5000/api/data-final/push-to-main-project',
+        `${API_BASE_URL}/data-final/push-to-main-project`,
         { recordIds: [] }, // Empty = all unpushed
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -941,9 +1029,9 @@ const DataFinal: React.FC = () => {
         </Alert>
       )}
 
-      {/* Filter by User - Only for Super Admin */}
+      {/* Filter and Export - Inline for Super Admin */}
       {user?.role === 'SUPER_ADMIN' && (
-        <Box sx={{ mb: 3 }}>
+        <Box sx={{ mb: 3, display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
           <FormControl sx={{ minWidth: 250 }}>
             <InputLabel>Filter by Completed By</InputLabel>
             <Select
@@ -959,13 +1047,26 @@ const DataFinal: React.FC = () => {
               ))}
             </Select>
           </FormControl>
+          
+          {/* Export Button - Inline with filter */}
+          {data.length > 0 && exportPublishers.length > 0 && (
+            <Button
+              variant="outlined"
+              color="info"
+              size="small"
+              onClick={() => setShowExportDialog(true)}
+              startIcon={<span>📊</span>}
+            >
+              Export by Publisher
+            </Button>
+          )}
         </Box>
       )}
 
       <Card>
         <CardContent>
-          {/* Push to LM Tool Buttons */}
-          <Box sx={{ mb: 2, display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+          {/* Push Buttons */}
+          <Box sx={{ mb: 2, display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
             {selectedIds.size > 0 && (
               <>
                 <Button
@@ -1034,6 +1135,7 @@ const DataFinal: React.FC = () => {
                     <TableCell><strong>DR</strong></TableCell>
                     <TableCell><strong>Traffic</strong></TableCell>
                     <TableCell><strong>SS</strong></TableCell>
+                    <TableCell><strong>Keywords</strong></TableCell>
                     <TableCell><strong>Category</strong></TableCell>
                     <TableCell><strong>Country</strong></TableCell>
                     <TableCell><strong>Language</strong></TableCell>
@@ -1121,6 +1223,9 @@ const DataFinal: React.FC = () => {
                       </TableCell>
                       <TableCell>
                         {row.ss || <Typography variant="caption" color="text.secondary">-</Typography>}
+                      </TableCell>
+                      <TableCell>
+                        {row.keywords || <Typography variant="caption" color="text.secondary">-</Typography>}
                       </TableCell>
                       <TableCell>
                         {getCategoryLabel(row.category) || <Typography variant="caption" color="text.secondary">Not set</Typography>}
@@ -1337,6 +1442,14 @@ const DataFinal: React.FC = () => {
                   InputProps={{ readOnly: true }}
                 />
               </Grid>
+              <Grid item xs={3}>
+                <TextField
+                  fullWidth
+                  label="Keywords"
+                  value={selectedRecord.keywords || '-'}
+                  InputProps={{ readOnly: true }}
+                />
+              </Grid>
               <Grid item xs={4}>
                 <TextField
                   fullWidth
@@ -1447,13 +1560,8 @@ const DataFinal: React.FC = () => {
                             fullWidth
                             label="Publisher Name"
                             value={editFormData.publisherName}
-                            onChange={selectedRecord.publisherId?.startsWith('pending_') 
-                              ? (e) => setEditFormData({...editFormData, publisherName: e.target.value})
-                              : undefined}
-                            InputProps={{ readOnly: !selectedRecord.publisherId?.startsWith('pending_') }}
-                            helperText={selectedRecord.publisherId?.startsWith('pending_') 
-                              ? "Editable - update publisher name if needed" 
-                              : "Read-only - matched from LM Tool"}
+                            onChange={(e) => setEditFormData({...editFormData, publisherName: e.target.value})}
+                            helperText="Editable - update publisher name if needed"
                           />
                         </Grid>
                         <Grid item xs={12} sm={6}>
@@ -1462,13 +1570,8 @@ const DataFinal: React.FC = () => {
                             label="Publisher Email"
                             type="email"
                             value={editFormData.publisherEmail || ''}
-                            onChange={selectedRecord.publisherId?.startsWith('pending_')
-                              ? (e) => setEditFormData({...editFormData, publisherEmail: e.target.value})
-                              : undefined}
-                            InputProps={{ readOnly: !selectedRecord.publisherId?.startsWith('pending_') }}
-                            helperText={selectedRecord.publisherId?.startsWith('pending_') 
-                              ? "Editable - update publisher email if needed" 
-                              : "Read-only - matched from LM Tool"}
+                            onChange={(e) => setEditFormData({...editFormData, publisherEmail: e.target.value})}
+                            helperText="Editable - update publisher email if needed"
                           />
                         </Grid>
                       </>
@@ -1532,7 +1635,8 @@ const DataFinal: React.FC = () => {
                     )}
                   </>
                 )}
-                <Grid item xs={6} sm={3}>
+                {/* First row - DA, DR, Traffic */}
+                <Grid item xs={4}>
                   <TextField
                     fullWidth
                     label="DA"
@@ -1542,7 +1646,7 @@ const DataFinal: React.FC = () => {
                     inputProps={{ min: 0, max: 100 }}
                   />
                 </Grid>
-                <Grid item xs={6} sm={3}>
+                <Grid item xs={4}>
                   <TextField
                     fullWidth
                     label="DR"
@@ -1552,7 +1656,7 @@ const DataFinal: React.FC = () => {
                     inputProps={{ min: 0, max: 100 }}
                   />
                 </Grid>
-                <Grid item xs={6} sm={3}>
+                <Grid item xs={4}>
                   <TextField
                     fullWidth
                     label="Traffic"
@@ -1561,7 +1665,8 @@ const DataFinal: React.FC = () => {
                     onChange={(e) => setEditFormData({...editFormData, traffic: e.target.value})}
                   />
                 </Grid>
-                <Grid item xs={6} sm={3}>
+                {/* Second row - SS, Keywords */}
+                <Grid item xs={6}>
                   <TextField
                     fullWidth
                     label="SS"
@@ -1569,6 +1674,16 @@ const DataFinal: React.FC = () => {
                     value={editFormData.ss}
                     onChange={(e) => setEditFormData({...editFormData, ss: e.target.value})}
                     inputProps={{ min: 0, max: 100 }}
+                  />
+                </Grid>
+                <Grid item xs={6}>
+                  <TextField
+                    fullWidth
+                    label="Keywords"
+                    type="number"
+                    value={editFormData.keywords}
+                    onChange={(e) => setEditFormData({...editFormData, keywords: e.target.value})}
+                    inputProps={{ min: 0 }}
                   />
                 </Grid>
                 <Grid item xs={12} sm={4}>
@@ -1753,6 +1868,69 @@ const DataFinal: React.FC = () => {
             startIcon={creatingPublisher ? <CircularProgress size={16} /> : null}
           >
             {creatingPublisher ? 'Marking...' : 'Mark as Publisher'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Export by Publisher Dialog */}
+      <Dialog open={showExportDialog} onClose={() => setShowExportDialog(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Export Data by Publisher</DialogTitle>
+        <DialogContent sx={{ mt: 2 }}>
+          <Box>
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Export all records for a specific publisher as CSV file.
+            </Alert>
+            
+            <FormControl fullWidth sx={{ mb: 2 }}>
+              <InputLabel>Select Publisher</InputLabel>
+              <Select
+                value={selectedExportPublisher}
+                label="Select Publisher"
+                onChange={(e) => setSelectedExportPublisher(e.target.value)}
+              >
+                {exportPublishers.map((publisher) => (
+                  <MenuItem key={publisher.email} value={publisher.email}>
+                    <Box>
+                      <Typography variant="body2">
+                        {publisher.name} ({publisher.recordCount} records)
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {publisher.email} {publisher.isMatched ? '• Matched Publisher' : '• Contact'}
+                      </Typography>
+                    </Box>
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            
+            {selectedExportPublisher && (
+              <Alert severity="success" sx={{ mt: 2 }}>
+                <strong>Export will include:</strong>
+                <ul style={{ margin: '8px 0 0 0', paddingLeft: '20px' }}>
+                  <li>All website records for this publisher</li>
+                  <li>Complete site details (DA, DR, Traffic, SS, etc.)</li>
+                  <li>Pricing information and status</li>
+                  <li>Push status and timestamps</li>
+                </ul>
+              </Alert>
+            )}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => {
+            setShowExportDialog(false);
+            setSelectedExportPublisher('');
+          }} disabled={exporting}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleExportByPublisher} 
+            variant="contained" 
+            color="info"
+            disabled={exporting || !selectedExportPublisher}
+            startIcon={exporting ? <CircularProgress size={16} /> : <span>📊</span>}
+          >
+            {exporting ? 'Exporting...' : 'Export CSV'}
           </Button>
         </DialogActions>
       </Dialog>

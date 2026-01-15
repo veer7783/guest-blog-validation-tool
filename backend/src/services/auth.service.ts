@@ -77,6 +77,8 @@ export class AuthService {
   static async login(data: LoginRequest, ipAddress: string, userAgent: string | null) {
     const { email, password, twoFactorCode } = data;
 
+    console.log('🔐 [AuthService] Login attempt for:', email);
+
     // Find user
     const user = await prisma.user.findUnique({
       where: { email },
@@ -86,8 +88,11 @@ export class AuthService {
     });
 
     if (!user) {
+      console.log('❌ [AuthService] User not found:', email);
       throw new AppError('Invalid email or password', 401);
     }
+
+    console.log('✅ [AuthService] User found:', user.email, 'Active:', user.isActive);
 
     // Check if user is active
     if (!user.isActive) {
@@ -96,7 +101,9 @@ export class AuthService {
 
     // Verify password
     const isPasswordValid = await bcrypt.compare(password, user.password);
+    console.log('🔑 [AuthService] Password valid:', isPasswordValid);
     if (!isPasswordValid) {
+      console.log('❌ [AuthService] Invalid password for:', email);
       throw new AppError('Invalid email or password', 401);
     }
 

@@ -2,6 +2,22 @@
 
 # Guest Blog Validation Tool - cPanel Deployment Script
 # Usage: ./deploy-to-cpanel.sh
+#
+# Prerequisites:
+# 1. SSH access to cPanel server
+# 2. Node.js installed (v18+)
+# 3. MySQL database created
+# 4. Backend .env configured with production values
+#
+# Production Environment Variables (backend/.env):
+# DATABASE_URL="mysql://datausehypwave_validation:password@localhost:3306/datausehypwave_data_validation_tool"
+# JWT_SECRET="your-secure-jwt-secret"
+# PORT=5000
+# NODE_ENV=production
+# MAIN_PROJECT_API_URL="https://links.usehypwave.com/api/api/guest-sites-api"
+# MAIN_PROJECT_SERVICE_EMAIL="validation-service@usehypwave.com"
+# MAIN_PROJECT_SERVICE_PASSWORD="your-service-password"
+# CORS_ORIGIN="https://data.usehypwave.com"
 
 set -e
 
@@ -11,6 +27,7 @@ echo ""
 
 # Configuration
 BACKEND_PATH="/home/datausehypwave/public_html/api"
+FRONTEND_PATH="/home/datausehypwave/public_html"
 SERVICE_NAME="datamanagement.service"
 BACKUP_DIR="$HOME/backups"
 LOG_DIR="$HOME/logs"

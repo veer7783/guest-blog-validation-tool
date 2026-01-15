@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE_URL } from '../config';
 import {
   Card,
   CardContent,
@@ -57,7 +58,9 @@ const Users: React.FC = () => {
   const [editFormData, setEditFormData] = useState({
     firstName: '',
     lastName: '',
-    email: ''
+    email: '',
+    role: '',
+    assignedAdminId: ''
   });
   
   // Password dialog
@@ -73,7 +76,8 @@ const Users: React.FC = () => {
     email: '',
     password: '',
     confirmPassword: '',
-    role: 'ADMIN'
+    role: 'ADMIN',
+    assignedAdminId: ''
   });
   
   // Authenticator dialog
@@ -95,7 +99,7 @@ const Users: React.FC = () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
-      const response = await axios.get('http://localhost:5000/api/users', {
+      const response = await axios.get(`${API_BASE_URL}/users`, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
@@ -115,7 +119,9 @@ const Users: React.FC = () => {
     setEditFormData({
       firstName: user.firstName,
       lastName: user.lastName,
-      email: user.email
+      email: user.email,
+      role: user.role,
+      assignedAdminId: (user as any).assignedAdminId || ''
     });
     setShowEditDialog(true);
   };
@@ -126,11 +132,16 @@ const Users: React.FC = () => {
     try {
       setSaving(true);
       const token = localStorage.getItem('token');
+      
+      console.log('Sending update request with data:', editFormData);
+      
       const response = await axios.put(
-        `http://localhost:5000/api/users/${selectedUser.id}`,
+        `${API_BASE_URL}/users/${selectedUser.id}`,
         editFormData,
         { headers: { Authorization: `Bearer ${token}` } }
       );
+
+      console.log('Update response:', response.data);
 
       if (response.data.success) {
         setSuccess('User updated successfully');
@@ -169,7 +180,7 @@ const Users: React.FC = () => {
       setSaving(true);
       const token = localStorage.getItem('token');
       const response = await axios.patch(
-        `http://localhost:5000/api/users/${selectedUser.id}/password`,
+        `${API_BASE_URL}/users/${selectedUser.id}/password`,
         { newPassword },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -204,17 +215,24 @@ const Users: React.FC = () => {
       return;
     }
 
+    // Validate assignedAdminId for CONTRIBUTOR role
+    if (createFormData.role === 'CONTRIBUTOR' && !createFormData.assignedAdminId) {
+      setError('Please assign an admin to this contributor');
+      return;
+    }
+
     try {
       setSaving(true);
       const token = localStorage.getItem('token');
       const response = await axios.post(
-        'http://localhost:5000/api/users',
+        `${API_BASE_URL}/users`,
         {
           firstName: createFormData.firstName,
           lastName: createFormData.lastName,
           email: createFormData.email,
           password: createFormData.password,
-          role: createFormData.role
+          role: createFormData.role,
+          assignedAdminId: createFormData.role === 'CONTRIBUTOR' ? createFormData.assignedAdminId : undefined
         },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -228,7 +246,8 @@ const Users: React.FC = () => {
           email: '',
           password: '',
           confirmPassword: '',
-          role: 'ADMIN'
+          role: 'ADMIN',
+          assignedAdminId: ''
         });
         fetchUsers();
       }
@@ -249,7 +268,7 @@ const Users: React.FC = () => {
       setSaving(true);
       const token = localStorage.getItem('token');
       const response = await axios.post(
-        `http://localhost:5000/api/users/${user.id}/reset-2fa`,
+        `${API_BASE_URL}/users/${user.id}/reset-2fa`,
         {},
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -271,7 +290,7 @@ const Users: React.FC = () => {
       setSaving(true);
       const token = localStorage.getItem('token');
       const response = await axios.post(
-        `http://localhost:5000/api/users/${user.id}/setup-2fa`,
+        `${API_BASE_URL}/users/${user.id}/setup-2fa`,
         {},
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -294,7 +313,7 @@ const Users: React.FC = () => {
     try {
       const token = localStorage.getItem('token');
       const response = await axios.patch(
-        `http://localhost:5000/api/users/${user.id}/status`,
+        `${API_BASE_URL}/users/${user.id}/status`,
         {},
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -391,8 +410,16 @@ const Users: React.FC = () => {
                       <TableCell>{user.email}</TableCell>
                       <TableCell>
                         <Chip
-                          label={user.role === 'SUPER_ADMIN' ? 'Super Admin' : 'Admin'}
-                          color={user.role === 'SUPER_ADMIN' ? 'secondary' : 'primary'}
+                          label={
+                            user.role === 'SUPER_ADMIN' ? 'Super Admin' : 
+                            user.role === 'ADMIN' ? 'Admin' : 
+                            user.role === 'CONTRIBUTOR' ? 'Contributor' : 'User'
+                          }
+                          color={
+                            user.role === 'SUPER_ADMIN' ? 'secondary' : 
+                            user.role === 'ADMIN' ? 'primary' : 
+                            user.role === 'CONTRIBUTOR' ? 'info' : 'default'
+                          }
                           size="small"
                         />
                       </TableCell>
@@ -521,7 +548,47 @@ const Users: React.FC = () => {
               type="email"
               value={editFormData.email}
               onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })}
+              sx={{ mb: 2 }}
             />
+            <TextField
+              fullWidth
+              select
+              label="Role"
+              value={editFormData.role}
+              onChange={(e) => setEditFormData({ ...editFormData, role: e.target.value })}
+              sx={{ mb: 2 }}
+              SelectProps={{ native: true }}
+            >
+              <option value="ADMIN">Admin</option>
+              <option value="SUPER_ADMIN">Super Admin</option>
+              <option value="USER">User</option>
+              <option value="CONTRIBUTOR">Contributor</option>
+            </TextField>
+            {editFormData.role === 'CONTRIBUTOR' && (
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="body2" sx={{ mb: 1, fontWeight: 500 }}>
+                  Assigned Admin *
+                </Typography>
+                <TextField
+                  fullWidth
+                  select
+                  value={editFormData.assignedAdminId}
+                  onChange={(e) => setEditFormData({ ...editFormData, assignedAdminId: e.target.value })}
+                  SelectProps={{ native: true }}
+                  required
+                  helperText="Select an admin to handle this contributor's uploads"
+                >
+                  <option value="">-- Select Admin --</option>
+                  {users
+                    .filter(u => u.role === 'ADMIN' || u.role === 'SUPER_ADMIN')
+                    .map(admin => (
+                      <option key={admin.id} value={admin.id}>
+                        {admin.firstName} {admin.lastName} ({admin.role})
+                      </option>
+                    ))}
+                </TextField>
+              </Box>
+            )}
           </Box>
         </DialogContent>
         <DialogActions>
@@ -604,7 +671,31 @@ const Users: React.FC = () => {
             >
               <option value="ADMIN">Admin</option>
               <option value="SUPER_ADMIN">Super Admin</option>
+              <option value="USER">User</option>
+              <option value="CONTRIBUTOR">Contributor</option>
             </TextField>
+            {createFormData.role === 'CONTRIBUTOR' && (
+              <TextField
+                fullWidth
+                select
+                label="Assigned Admin"
+                value={createFormData.assignedAdminId}
+                onChange={(e) => setCreateFormData({ ...createFormData, assignedAdminId: e.target.value })}
+                sx={{ mb: 2 }}
+                SelectProps={{ native: true }}
+                required
+                helperText="Select an admin to handle this contributor's uploads"
+              >
+                <option value="">-- Select Admin --</option>
+                {users
+                  .filter(u => u.role === 'ADMIN' || u.role === 'SUPER_ADMIN')
+                  .map(admin => (
+                    <option key={admin.id} value={admin.id}>
+                      {admin.firstName} {admin.lastName} ({admin.role})
+                    </option>
+                  ))}
+              </TextField>
+            )}
             <TextField
               fullWidth
               label="Password"

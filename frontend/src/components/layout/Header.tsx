@@ -20,9 +20,11 @@ import { useAuth } from '../../contexts/AuthContext';
 interface HeaderProps {
   drawerWidth: number;
   handleDrawerToggle: () => void;
+  sidebarCollapsed: boolean;
+  handleSidebarToggle: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ drawerWidth, handleDrawerToggle }) => {
+const Header: React.FC<HeaderProps> = ({ drawerWidth, handleDrawerToggle, sidebarCollapsed, handleSidebarToggle }) => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
@@ -47,6 +49,7 @@ const Header: React.FC<HeaderProps> = ({ drawerWidth, handleDrawerToggle }) => {
       sx={{
         width: { sm: `calc(100% - ${drawerWidth}px)` },
         ml: { sm: `${drawerWidth}px` },
+        transition: 'width 0.3s ease, margin 0.3s ease',
       }}
     >
       <Toolbar>
@@ -59,9 +62,16 @@ const Header: React.FC<HeaderProps> = ({ drawerWidth, handleDrawerToggle }) => {
           <MenuIcon />
         </IconButton>
 
-        <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
-          Guest Blog Validation Tool
-        </Typography>
+        {/* Desktop sidebar toggle button */}
+        <IconButton
+          color="inherit"
+          onClick={handleSidebarToggle}
+          sx={{ mr: 2, display: { xs: 'none', sm: 'block' } }}
+        >
+          {sidebarCollapsed ? '→' : '←'}
+        </IconButton>
+
+        <Box sx={{ flexGrow: 1 }} />
 
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           <Chip

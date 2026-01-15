@@ -10,6 +10,7 @@ const router = Router();
 router.use(authenticate);
 
 // Super Admin only routes
+router.post('/', requireSuperAdmin, UserController.createUser);
 router.get('/', requireSuperAdmin, UserController.getAllUsers);
 router.get('/stats', requireSuperAdmin, UserController.getUserStats);
 router.get('/:id', requireSuperAdmin, UserController.getUserById);

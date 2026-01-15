@@ -139,14 +139,16 @@ export class MainProjectAPIService {
         console.log('=== DUPLICATE CHECK RESPONSE ===');
         console.log('existingDomains:', data.existingDomains);
         console.log('existingSites:', JSON.stringify(data.existingSites, null, 2));
+        
+        // Normalize all existing domains from main project for comparison
+        const normalizedExistingDomains = (data.existingDomains || []).map((d: string) => normalizeDomain(d));
+        console.log('Normalized existing domains:', normalizedExistingDomains);
         console.log('================================');
         
         // Map response back to original normalized URLs
         return normalizedUrls.map(url => {
-          // Check if any variation of this URL is in existingDomains
-          const isDuplicate = data.existingDomains && data.existingDomains.some((existingUrl: string) => 
-            normalizeDomain(existingUrl) === url
-          );
+          // Check if normalized URL matches any normalized existing domain
+          const isDuplicate = normalizedExistingDomains.includes(url);
           
           // Find existing site by normalized URL
           const existingSite = data.existingSites?.find((site: any) => 
@@ -237,6 +239,7 @@ export class MainProjectAPIService {
     dr?: number;
     traffic?: number;
     ss?: number;
+    keywords?: number;
     gbBasePrice?: number;
     liBasePrice?: number;
     status?: string;
@@ -254,6 +257,7 @@ export class MainProjectAPIService {
         dr: site.dr || 0,
         ahrefs_traffic: site.traffic || 0,
         ss: site.ss,
+        keywords: site.keywords,
         category: site.category || 'GENERAL',
         country: site.country || 'US',
         site_language: site.language || 'en',
@@ -427,6 +431,7 @@ export class MainProjectAPIService {
     dr?: number;
     traffic?: number;
     ss?: number;
+    keywords?: number;
     gbBasePrice?: number;
     liBasePrice?: number;
     tat?: string;
@@ -460,6 +465,7 @@ export class MainProjectAPIService {
         dr: site.dr || 0,
         ahrefs_traffic: site.traffic || 0,
         ss: site.ss,
+        keywords: site.keywords,
         category: site.category || 'GENERAL',
         country: site.country || 'US',
         site_language: site.language || 'en',
@@ -718,16 +724,29 @@ export class MainProjectAPIService {
       if (response.data.success && response.data.data) {
         const apiResults = response.data.data.results || [];
         
-        const results = apiResults.map((r: any) => ({
-          site_url: r.site_url,
-          exists: r.exists,
-          current_price: r.current_price,
-          new_price: r.new_price,
-          action: r.action === 'SKIP_SAME_PRICE' ? 'SKIP_SAME' as const : 
+        console.log('\n=== PENDING SITES PRICE CHECK RESPONSE ===');
+        console.log('API Results:', JSON.stringify(apiResults, null, 2));
+        
+        const results = apiResults.map((r: any) => {
+          const mappedAction = r.action === 'SKIP_SAME_PRICE' ? 'SKIP_SAME' as const : 
                   r.action === 'SKIP_HIGHER_PRICE' ? 'SKIP_HIGHER' as const :
-                  r.action as 'CREATE' | 'UPDATE' | 'SKIP_SAME' | 'SKIP_HIGHER',
-          status: r.status
-        }));
+                  r.action as 'CREATE' | 'UPDATE' | 'SKIP_SAME' | 'SKIP_HIGHER';
+          
+          console.log(`Site: ${r.site_url}`);
+          console.log(`  Exists: ${r.exists}, Status: ${r.status}`);
+          console.log(`  Current Price: $${r.current_price}, New Price: $${r.new_price}`);
+          console.log(`  Original Action: ${r.action}, Mapped Action: ${mappedAction}`);
+          
+          return {
+            site_url: r.site_url,
+            exists: r.exists,
+            current_price: r.current_price,
+            new_price: r.new_price,
+            action: mappedAction,
+            status: r.status
+          };
+        });
+        console.log('==========================================\n');
 
         return { success: true, results };
       }
@@ -799,28 +818,38 @@ export class MainProjectAPIService {
           finalAction = mainResult.action;
         }
         
-        // Check pending sites result - override if more restrictive
-        if (pendingResult?.exists) {
+        // Check pending sites result
+        if (pendingResult?.exists && pendingResult.status === 'pending') {
           const pendingAction = pendingResult.action;
           
-          // If pending has same/higher price, use that (more restrictive)
-          if (pendingAction === 'SKIP_SAME' || pendingAction === 'SKIP_HIGHER') {
-            // Only override if main didn't already skip, or if pending price is lower
-            if (finalAction === 'CREATE' || finalAction === 'UPDATE' || 
-                (pendingResult.current_price !== undefined && 
-                 (finalPrice === undefined || pendingResult.current_price <= finalPrice))) {
+          console.log(`\n[MERGE LOGIC] Site: ${site.site_url}`);
+          console.log(`  Main Result Exists: ${mainResult?.exists}`);
+          console.log(`  Pending Result: exists=${pendingResult.exists}, status=${pendingResult.status}, action=${pendingAction}`);
+          console.log(`  Pending Current Price: $${pendingResult.current_price}, New Price: $${site.new_price}`);
+          
+          // Only consider pending sites with 'pending' status
+          // Priority: Guest blog sites > Pending sites
+          if (!mainResult?.exists) {
+            // Not in guest blog sites, check pending
+            if (pendingAction === 'UPDATE') {
+              // Pending site with lower price - allow update/merge
               exists = true;
               finalPrice = pendingResult.current_price;
-              source = 'pending_sites';
+              source = 'pending_sites_pending';
+              finalAction = 'UPDATE';
+              console.log(`  ✓ FINAL ACTION: UPDATE (pending site with lower price)`);
+            } else if (pendingAction === 'SKIP_SAME' || pendingAction === 'SKIP_HIGHER') {
+              // Pending site with same/higher price - skip
+              exists = true;
+              finalPrice = pendingResult.current_price;
+              source = 'pending_sites_pending';
               finalAction = pendingAction;
+              console.log(`  ✗ FINAL ACTION: ${pendingAction} (pending site with same/higher price)`);
             }
-          } else if (pendingAction === 'UPDATE' && finalAction === 'CREATE') {
-            // Pending exists but with higher price - can update
-            exists = true;
-            finalPrice = pendingResult.current_price;
-            source = 'pending_sites';
-            finalAction = 'UPDATE';
+          } else {
+            console.log(`  → Ignoring pending result (guest blog sites takes priority)`);
           }
+          // If exists in guest blog sites, ignore pending (guest blog takes priority)
         }
         
         return {
@@ -850,6 +879,122 @@ export class MainProjectAPIService {
         results: [],
         summary: { total: 0, toCreate: 0, toUpdate: 0, skipSamePrice: 0, skipHigherPrice: 0 }
       };
+    }
+  }
+
+  /**
+   * Check duplicates against pending sites module (ONLY 'pending' status sites)
+   */
+  static async checkDuplicatesInPending(websiteUrls: string[]): Promise<Array<{
+    websiteUrl: string;
+    isDuplicate: boolean;
+    existingId?: string;
+    existingPrice?: number | null;
+    status?: string;
+  }>> {
+    try {
+      const normalizedUrls = websiteUrls.map(url => normalizeDomain(url));
+      const axiosInstance = await this.getAxiosInstance();
+      
+      const response = await axiosInstance.post<MainProjectAPIResponse>(
+        '/check-pending-duplicates',
+        { domains: normalizedUrls }
+      );
+
+      if (response.data.success && response.data.data) {
+        const data = response.data.data;
+        
+        return normalizedUrls.map(url => {
+          // Only consider sites with 'pending' status (not accepted/rejected)
+          const existingSite = data.existingSites?.find((site: any) => 
+            normalizeDomain(site.site_url) === url && site.status === 'pending'
+          );
+          
+          return {
+            websiteUrl: url,
+            isDuplicate: !!existingSite,
+            existingId: existingSite?.id,
+            existingPrice: existingSite?.base_price ?? null,
+            status: existingSite?.status
+          };
+        });
+      }
+
+      return normalizedUrls.map(url => ({
+        websiteUrl: url,
+        isDuplicate: false
+      }));
+    } catch (error: any) {
+      console.error('Main project pending duplicate check error:', error.message);
+      // If endpoint doesn't exist, return empty results (not a failure)
+      return websiteUrls.map(url => ({
+        websiteUrl: url,
+        isDuplicate: false
+      }));
+    }
+  }
+
+  /**
+   * Check duplicates in both guest blog sites AND pending sites modules
+   * For pending sites: ONLY checks sites with 'pending' status
+   */
+  static async checkDuplicatesAllModules(websiteUrls: string[]): Promise<Array<{
+    websiteUrl: string;
+    isDuplicate: boolean;
+    existingId?: string;
+    existingPrice?: number | null;
+    source?: string;
+  }>> {
+    try {
+      // Check both modules in parallel
+      const [guestBlogResults, pendingResults] = await Promise.all([
+        this.checkDuplicates(websiteUrls),
+        this.checkDuplicatesInPending(websiteUrls)
+      ]);
+
+      // Merge results - priority: Guest Blog Sites > Pending Sites (pending status only)
+      return websiteUrls.map(url => {
+        const normalizedUrl = normalizeDomain(url);
+        
+        const guestBlogResult = guestBlogResults.find(r => 
+          normalizeDomain(r.websiteUrl) === normalizedUrl
+        );
+        
+        const pendingResult = pendingResults.find(r => 
+          normalizeDomain(r.websiteUrl) === normalizedUrl
+        );
+
+        // Priority 1: Guest blog sites (always takes precedence)
+        if (guestBlogResult?.isDuplicate) {
+          return {
+            websiteUrl: url,
+            isDuplicate: true,
+            existingId: guestBlogResult.existingId,
+            existingPrice: guestBlogResult.existingPrice,
+            source: 'guest_blog_sites'
+          };
+        }
+
+        // Priority 2: Pending sites (only 'pending' status)
+        if (pendingResult?.isDuplicate && pendingResult.status === 'pending') {
+          return {
+            websiteUrl: url,
+            isDuplicate: true,
+            existingId: pendingResult.existingId,
+            existingPrice: pendingResult.existingPrice,
+            source: 'pending_sites_pending'
+          };
+        }
+
+        return {
+          websiteUrl: url,
+          isDuplicate: false
+        };
+      });
+    } catch (error: any) {
+      console.error('Main project check duplicates all modules error:', error.message);
+      // Fallback to just guest blog sites check
+      return this.checkDuplicates(websiteUrls);
     }
   }
 

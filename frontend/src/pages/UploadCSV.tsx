@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { API_BASE_URL } from '../config';
 import { 
   Card, 
   CardContent, 
@@ -98,13 +99,22 @@ const UploadCSV: React.FC = () => {
   const [assignedTo, setAssignedTo] = useState<string>('');
   const [loadingUsers, setLoadingUsers] = useState(false);
 
-  // Fetch admin users on component mount
+  // Get current user role
+  const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+  const isContributor = currentUser.role === 'CONTRIBUTOR';
+
+  // Fetch admin users on component mount (only for SUPER_ADMIN)
   React.useEffect(() => {
+    // Only SUPER_ADMIN needs to fetch users for assignment
+    if (isContributor) {
+      return;
+    }
+
     const fetchUsers = async () => {
       setLoadingUsers(true);
       try {
         const token = localStorage.getItem('token');
-        const response = await axios.get('http://localhost:5000/api/users', {
+        const response = await axios.get(`${API_BASE_URL}/users`, {
           headers: {
             Authorization: `Bearer ${token}`
           }
@@ -129,20 +139,30 @@ const UploadCSV: React.FC = () => {
     };
 
     fetchUsers();
-  }, []);
+  }, [isContributor]);
 
-  const handleDownloadTemplate = async (withPrice: boolean = false) => {
+  const handleDownloadTemplate = async (templateType: 'basic' | 'price' | 'full' = 'basic') => {
     setDownloading(true);
     setError('');
     
     try {
       const token = localStorage.getItem('token');
-      const endpoint = withPrice 
-        ? 'http://localhost:5000/api/upload/template-with-price'
-        : 'http://localhost:5000/api/upload/template';
-      const filename = withPrice 
-        ? 'guest_blog_template_with_price.csv'
-        : 'guest_blog_template.csv';
+      let endpoint: string;
+      let filename: string;
+      
+      switch (templateType) {
+        case 'price':
+          endpoint = `${API_BASE_URL}/upload/template-with-price`;
+          filename = 'guest_blog_template_with_price.csv';
+          break;
+        case 'full':
+          endpoint = `${API_BASE_URL}/upload/template-full`;
+          filename = 'guest_blog_full_template.csv';
+          break;
+        default:
+          endpoint = `${API_BASE_URL}/upload/template`;
+          filename = 'guest_blog_template.csv';
+      }
         
       const response = await axios.get(endpoint, {
         headers: {
@@ -187,7 +207,8 @@ const UploadCSV: React.FC = () => {
       return;
     }
 
-    if (!assignedTo) {
+    // Only check assignedTo for non-CONTRIBUTOR users
+    if (!isContributor && !assignedTo) {
       setError('Please assign the task to an admin user before uploading');
       return;
     }
@@ -201,9 +222,12 @@ const UploadCSV: React.FC = () => {
       const token = localStorage.getItem('token');
       const formData = new FormData();
       formData.append('file', selectedFile);
-      formData.append('assignedTo', assignedTo);
+      // Only add assignedTo for non-CONTRIBUTOR users
+      if (!isContributor && assignedTo) {
+        formData.append('assignedTo', assignedTo);
+      }
 
-      const response = await axios.post('http://localhost:5000/api/upload/csv', formData, {
+      const response = await axios.post(`${API_BASE_URL}/upload/csv`, formData, {
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'multipart/form-data'
@@ -306,9 +330,9 @@ const UploadCSV: React.FC = () => {
                 <Typography variant="body1" sx={{ color: 'success.main' }}>
                   ✅ <strong>New Domains:</strong> {uploadResult.summary.uniqueRows}
                 </Typography>
-                {uploadResult.newDomains && uploadResult.newDomains.length > 2 && (
+                {uploadResult.newDomains && uploadResult.newDomains.length > 5 && (
                   <Chip 
-                    label={`+${uploadResult.newDomains.length - 2} more`}
+                    label={`View all ${uploadResult.newDomains.length}`}
                     size="small"
                     color="success"
                     onClick={() => setShowNewDomainsDialog(true)}
@@ -316,10 +340,14 @@ const UploadCSV: React.FC = () => {
                   />
                 )}
               </Box>
-              {uploadResult.newDomains && uploadResult.newDomains.length > 0 && (
+              {uploadResult.newDomains && uploadResult.newDomains.length > 0 && uploadResult.newDomains.length <= 5 && (
                 <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', ml: 3, fontStyle: 'italic' }}>
-                  {uploadResult.newDomains.slice(0, 2).join(', ')}
-                  {uploadResult.newDomains.length > 2 && '...'}
+                  {uploadResult.newDomains.join(', ')}
+                </Typography>
+              )}
+              {uploadResult.newDomains && uploadResult.newDomains.length > 5 && (
+                <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', ml: 3, fontStyle: 'italic' }}>
+                  {uploadResult.newDomains.slice(0, 5).join(', ')}... (click to view all)
                 </Typography>
               )}
             </Box>
@@ -331,7 +359,7 @@ const UploadCSV: React.FC = () => {
                   <Typography variant="body1" sx={{ color: 'info.main' }}>
                     💰 <strong>Price Updates:</strong> {uploadResult.summary.priceUpdates}
                   </Typography>
-                  {uploadResult.priceUpdatedDomains && uploadResult.priceUpdatedDomains.length > 3 && (
+                  {uploadResult.priceUpdatedDomains && uploadResult.priceUpdatedDomains.length > 5 && (
                     <Chip 
                       label={`View all ${uploadResult.priceUpdatedDomains.length}`}
                       size="small"
@@ -342,18 +370,18 @@ const UploadCSV: React.FC = () => {
                   )}
                 </Box>
                 <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', ml: 3, mt: 0.5 }}>
-                  {uploadResult.summary.priceUpdates} site(s) already exist but found with lower price - will be processed for update
+                  {uploadResult.summary.priceUpdates} site(s) found with lower price - will be updated
                 </Typography>
                 {uploadResult.priceUpdatedDomains && uploadResult.priceUpdatedDomains.length > 0 && (
                   <Box sx={{ ml: 3, mt: 0.5 }}>
-                    {uploadResult.priceUpdatedDomains.slice(0, 3).map((d, idx) => (
+                    {uploadResult.priceUpdatedDomains.slice(0, 5).map((d, idx) => (
                       <Typography key={idx} variant="caption" sx={{ color: 'info.main', display: 'block', fontStyle: 'italic' }}>
                         • {d.domain} (${d.currentPrice} → ${d.newPrice})
                       </Typography>
                     ))}
-                    {uploadResult.priceUpdatedDomains.length > 3 && (
-                      <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', fontStyle: 'italic' }}>
-                        ... and {uploadResult.priceUpdatedDomains.length - 3} more
+                    {uploadResult.priceUpdatedDomains.length > 5 && (
+                      <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', fontStyle: 'italic', cursor: 'pointer' }} onClick={() => setShowPriceUpdatesDialog(true)}>
+                        ... and {uploadResult.priceUpdatedDomains.length - 5} more (click to view all)
                       </Typography>
                     )}
                   </Box>
@@ -361,19 +389,17 @@ const UploadCSV: React.FC = () => {
               </Box>
             )}
 
-            {/* Skipped Section - Only show truly skipped items (NOT price updates) */}
+            {/* Skipped Section - Show all skipped items including price-based skips */}
             {(() => {
-              // Calculate skipped count - EXCLUDE priceSkipped as those are handled in Price Updates section
+              // Calculate skipped count
               const totalSkipped = (uploadResult.summary.duplicatesInCSV || 0) + 
                 (uploadResult.summary.duplicatesInCurrentSystem || 0) + 
                 (uploadResult.summary.duplicatesInMainProject || 0);
               
-              // Only show price-skipped if there are NO price updates (meaning they were truly skipped, not updated)
-              const priceSkippedOnly = uploadResult.summary.priceSkipped && !uploadResult.summary.priceUpdates 
-                ? uploadResult.summary.priceSkipped 
-                : 0;
+              // Always include price-skipped domains
+              const priceSkippedCount = uploadResult.summary.priceSkipped || 0;
               
-              const finalSkipped = totalSkipped + priceSkippedOnly;
+              const finalSkipped = totalSkipped + priceSkippedCount;
               
               if (finalSkipped <= 0) return null;
               
@@ -383,6 +409,15 @@ const UploadCSV: React.FC = () => {
                     <Typography variant="body1" sx={{ color: 'warning.main' }}>
                       ⏭️ <strong>Skipped:</strong> {finalSkipped}
                     </Typography>
+                    {finalSkipped > 5 && (
+                      <Chip 
+                        label={`View details`}
+                        size="small"
+                        color="warning"
+                        onClick={() => setShowDuplicatesDialog(true)}
+                        sx={{ cursor: 'pointer', fontSize: '0.75rem' }}
+                      />
+                    )}
                   </Box>
                   
                   {/* Show CSV duplicates */}
@@ -395,7 +430,7 @@ const UploadCSV: React.FC = () => {
                   {/* Show Current System duplicates */}
                   {uploadResult.summary.duplicatesInCurrentSystem && uploadResult.summary.duplicatesInCurrentSystem > 0 && (
                     <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', ml: 3, mt: 0.5 }}>
-                      • {uploadResult.summary.duplicatesInCurrentSystem} already in Data Management
+                      • {uploadResult.summary.duplicatesInCurrentSystem} already in current tool (same/higher price)
                     </Typography>
                   )}
 
@@ -406,11 +441,23 @@ const UploadCSV: React.FC = () => {
                     </Typography>
                   )}
 
-                  {/* Show price-skipped ONLY if no price updates exist */}
-                  {priceSkippedOnly > 0 && (
-                    <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', ml: 3, mt: 0.5 }}>
-                      • {priceSkippedOnly} same/higher price (no update needed)
-                    </Typography>
+                  {/* Show price-skipped domains with details */}
+                  {priceSkippedCount > 0 && uploadResult.priceSkippedDomains && (
+                    <Box sx={{ ml: 3, mt: 0.5 }}>
+                      <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', fontWeight: 'bold' }}>
+                        • {priceSkippedCount} skipped due to price:
+                      </Typography>
+                      {uploadResult.priceSkippedDomains.slice(0, 5).map((item: any, index: number) => (
+                        <Typography key={index} variant="caption" sx={{ color: 'text.secondary', display: 'block', ml: 2, fontStyle: 'italic' }}>
+                          - {item.domain}: {item.reason} (Current: ${item.currentPrice}, CSV: ${item.newPrice})
+                        </Typography>
+                      ))}
+                      {uploadResult.priceSkippedDomains.length > 5 && (
+                        <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', ml: 2, fontStyle: 'italic', cursor: 'pointer' }}>
+                          ... and {uploadResult.priceSkippedDomains.length - 5} more
+                        </Typography>
+                      )}
+                    </Box>
                   )}
                 </Box>
               );
@@ -454,32 +501,43 @@ const UploadCSV: React.FC = () => {
 
       <Card>
         <CardContent>
-          {/* Assign To Dropdown */}
-          <Box sx={{ mb: 3 }}>
-            <FormControl fullWidth required>
-              <InputLabel id="assign-to-label">Assign To Admin User *</InputLabel>
-              <Select
-                labelId="assign-to-label"
-                id="assign-to"
-                value={assignedTo}
-                label="Assign To Admin User *"
-                onChange={(e) => setAssignedTo(e.target.value)}
-                disabled={loadingUsers}
-              >
-                <MenuItem value="">
-                  <em>-- Select an admin user --</em>
-                </MenuItem>
-                {users.map((user) => (
-                  <MenuItem key={user.id} value={user.id}>
-                    {user.firstName} {user.lastName} ({user.email})
+          {/* Assign To Dropdown - Hidden for CONTRIBUTOR users */}
+          {!isContributor && (
+            <Box sx={{ mb: 3 }}>
+              <FormControl fullWidth required>
+                <InputLabel id="assign-to-label">Assign To Admin User *</InputLabel>
+                <Select
+                  labelId="assign-to-label"
+                  id="assign-to"
+                  value={assignedTo}
+                  label="Assign To Admin User *"
+                  onChange={(e) => setAssignedTo(e.target.value)}
+                  disabled={loadingUsers}
+                >
+                  <MenuItem value="">
+                    <em>-- Select an admin user --</em>
                   </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <Typography variant="caption" color="error.main" sx={{ mt: 0.5, display: 'block', fontWeight: 'bold' }}>
-              * Required: You must assign this task to an admin user before uploading.
-            </Typography>
-          </Box>
+                  {users.map((user) => (
+                    <MenuItem key={user.id} value={user.id}>
+                      {user.firstName} {user.lastName} ({user.email})
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <Typography variant="caption" color="error.main" sx={{ mt: 0.5, display: 'block', fontWeight: 'bold' }}>
+                * Required: You must assign this task to an admin user before uploading.
+              </Typography>
+            </Box>
+          )}
+          
+          {/* Info message for CONTRIBUTOR users */}
+          {isContributor && (
+            <Box sx={{ mb: 3 }}>
+              <Alert severity="info">
+                Your uploads will be automatically assigned to your designated admin for review.
+              </Alert>
+            </Box>
+          )}
 
           <Box
             sx={{
@@ -527,24 +585,58 @@ const UploadCSV: React.FC = () => {
 
           <Box sx={{ mt: 3, textAlign: 'center', display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap' }}>
             <Button
-              variant="outlined"
-              startIcon={downloading ? <CircularProgress size={16} /> : <DownloadIcon />}
-              size="small"
-              onClick={() => handleDownloadTemplate(false)}
-              disabled={downloading}
-            >
-              {downloading ? 'Downloading...' : 'Download Template (Site Only)'}
-            </Button>
-            <Button
               variant="contained"
-              color="secondary"
+              color="primary"
               startIcon={downloading ? <CircularProgress size={16} /> : <DownloadIcon />}
-              size="small"
-              onClick={() => handleDownloadTemplate(true)}
+              size="medium"
+              onClick={() => handleDownloadTemplate('full')}
               disabled={downloading}
             >
-              {downloading ? 'Downloading...' : 'Download Template (With Price)'}
+              {downloading ? 'Downloading...' : 'Data CSV Template'}
             </Button>
+          </Box>
+        </CardContent>
+      </Card>
+
+      {/* Supported Fields Information */}
+      <Card sx={{ mt: 3 }}>
+        <CardContent>
+          <Typography variant="h6" gutterBottom sx={{ color: 'primary.main', fontWeight: 'bold' }}>
+            📋 Supported CSV Fields
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Your CSV file can include any of these fields. Only fields with data will be imported (empty fields are skipped):
+          </Typography>
+          
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 3 }}>
+            <Box>
+              <Typography variant="subtitle2" sx={{ fontWeight: 'bold', color: 'success.main', mb: 1 }}>
+                🔹 Required Fields
+              </Typography>
+              <Box sx={{ ml: 2 }}>
+                <Typography variant="body2">• <strong>Site/Domain/URL</strong> - Website URL (required)</Typography>
+              </Box>
+            </Box>
+            
+            <Box>
+              <Typography variant="subtitle2" sx={{ fontWeight: 'bold', color: 'info.main', mb: 1 }}>
+                🔹 Optional Fields
+              </Typography>
+              <Box sx={{ ml: 2 }}>
+                <Typography variant="body2">• <strong>Publisher</strong> - Publisher name or email</Typography>
+                <Typography variant="body2">• <strong>GB Base Price/Price</strong> - Guest blog price</Typography>
+                <Typography variant="body2">• <strong>LI Base Price</strong> - Link insertion price</Typography>
+                <Typography variant="body2">• <strong>DA/Domain Authority</strong> - Domain Authority (0-100)</Typography>
+                <Typography variant="body2">• <strong>DR/Domain Rating</strong> - Domain Rating (0-100)</Typography>
+                <Typography variant="body2">• <strong>Traffic</strong> - Monthly traffic</Typography>
+                <Typography variant="body2">• <strong>SS/Spam Score</strong> - Spam Score (0-100)</Typography>
+                <Typography variant="body2">• <strong>Keywords</strong> - Number of keywords</Typography>
+                <Typography variant="body2">• <strong>Category</strong> - Website category</Typography>
+                <Typography variant="body2">• <strong>Country</strong> - Website country</Typography>
+                <Typography variant="body2">• <strong>Language</strong> - Website language</Typography>
+                <Typography variant="body2">• <strong>TAT/Turnaround Time</strong> - Delivery time</Typography>
+              </Box>
+            </Box>
           </Box>
         </CardContent>
       </Card>

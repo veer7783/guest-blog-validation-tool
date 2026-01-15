@@ -8,6 +8,7 @@ import { cleanupFile } from '../middleware/upload';
 import { ActivityLogService } from '../services/activityLog.service';
 import { getClientIp } from '../utils/helpers';
 import { MainProjectAPIService } from '../services/mainProjectAPI.service';
+import { compareAndGetUpdates, shouldUpdateBasedOnPrice, hasFieldUpdates } from '../utils/fieldComparison';
 import prisma from '../config/database';
 
 export class UploadController {
@@ -27,17 +28,40 @@ export class UploadController {
       }
 
       const userId = req.user!.id;
+      const userRole = req.user!.role;
       const ipAddress = getClientIp(req);
       const userAgent = req.headers['user-agent'] || null;
 
-      // Validate that assignedTo is provided (required for Super Admin)
-      if (!req.body.assignedTo) {
-        cleanupFile(filePath);
-        res.status(400).json({
-          success: false,
-          error: { message: 'User assignment is required before uploading' }
+      // Get assignedTo - for CONTRIBUTOR, use their assigned admin; for others, require manual assignment
+      let assignedTo = req.body.assignedTo;
+      
+      if (userRole === 'CONTRIBUTOR') {
+        // Get CONTRIBUTOR's assigned admin
+        const contributor = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { assignedAdminId: true }
         });
-        return;
+        
+        if (!contributor?.assignedAdminId) {
+          cleanupFile(filePath);
+          res.status(400).json({
+            success: false,
+            error: { message: 'No admin assigned to your account. Please contact administrator.' }
+          });
+          return;
+        }
+        
+        assignedTo = contributor.assignedAdminId;
+      } else {
+        // For SUPER_ADMIN and ADMIN, validate that assignedTo is provided
+        if (!assignedTo) {
+          cleanupFile(filePath);
+          res.status(400).json({
+            success: false,
+            error: { message: 'User assignment is required before uploading' }
+          });
+          return;
+        }
       }
 
       // Parse CSV
@@ -116,16 +140,13 @@ export class UploadController {
 
       // Filter rows based on duplicate check and price comparison
       let uniqueRows: typeof uniqueRowsInCSV = [];
-      // Track rows that need price update in current system (not new records)
-      // Also include contact/publisher info to update if different (from publisher field in CSV)
+      // Track rows that need updates in current system (not new records)
+      // Include all field updates from enhanced comparison logic
       const rowsToUpdateInCurrentSystem: Array<{ 
         id: string; 
-        price: number; 
         source: string;
-        contactName?: string;
-        contactEmail?: string;
-        publisherName?: string;
-        publisherEmail?: string;
+        updates: any;
+        hasPriceImprovement?: boolean;
       }> = [];
       
       if (hasPriceData && priceCheckResults?.success) {
@@ -142,12 +163,14 @@ export class UploadController {
           
           if (!dupCheck.isDuplicate) {
             // Not a duplicate - include it as new
+            console.log(`[${row.websiteUrl}] Not a duplicate - adding as new`);
             uniqueRows.push(row);
           } else if (rowPrice > 0) {
+            console.log(`[${row.websiteUrl}] Is duplicate with price ${rowPrice}, source: ${dupCheck.source}`);
             // It's a duplicate with price - check source and compare prices
             
-            if (dupCheck.source === 'main_project' && priceResult) {
-              // Duplicate in main project - use main project price check
+            if ((dupCheck.source === 'main_project' || dupCheck.source === 'guest_blog_sites' || dupCheck.source === 'pending_sites_pending') && priceResult) {
+              // Duplicate in main project (guest blog sites OR pending sites with pending status)
               if (priceResult.action === 'UPDATE') {
                 // Price is lower - include for update (will be sent to main project)
                 uniqueRows.push(row);
@@ -158,9 +181,10 @@ export class UploadController {
                 });
               } else if (priceResult.action === 'SKIP_HIGHER' || priceResult.action === 'SKIP_SAME') {
                 // Price is same or higher - skip
+                const sourceLabel = dupCheck.source === 'pending_sites_pending' ? 'pending sites (pending status)' : 'main project';
                 priceSkippedDomains.push({
                   domain: row.websiteUrl,
-                  reason: priceResult.action === 'SKIP_SAME' ? 'Same price' : 'Higher price',
+                  reason: `${priceResult.action === 'SKIP_SAME' ? 'Same price' : 'Higher price'} (in ${sourceLabel})`,
                   currentPrice: priceResult.current_price,
                   newPrice: rowPrice
                 });
@@ -169,56 +193,110 @@ export class UploadController {
                 uniqueRows.push(row);
               }
             } else if (dupCheck.source === 'data_in_process' || dupCheck.source === 'data_final') {
-              // Duplicate in current system - compare with existing price
+              // Duplicate in current system - use enhanced field comparison
               const existingPrice = dupCheck.existingPrice || 0;
+              const existingData = dupCheck.existingData;
               
-              if (rowPrice < existingPrice) {
-                // New price is lower - UPDATE existing record (don't create new)
-                // Also update contact/publisher info if provided in the uploaded data
-                // Extract contact info from publisher field (email vs name)
-                const publisherValue = row.publisher?.trim() || '';
-                const isEmail = publisherValue.includes('@');
+              console.log(`\n=== CHECKING: ${row.websiteUrl} ===`);
+              console.log(`CSV Price: ${rowPrice}, Existing Price in Current System: ${existingPrice}`);
+              
+              // IMPORTANT: Also check main project price even if site exists in current system
+              // If main project has lower price, skip this upload
+              if (priceResult && rowPrice > 0) {
+                console.log(`Main Project Price Check: ${priceResult.current_price}`);
+                if (priceResult.action === 'SKIP_HIGHER' || priceResult.action === 'SKIP_SAME') {
+                  // Main project has same or lower price - skip this upload
+                  console.log(`⚠️ SKIPPING: Main project has lower/same price (${priceResult.current_price}) than CSV (${rowPrice})`);
+                  priceSkippedDomains.push({
+                    domain: row.websiteUrl,
+                    reason: `${priceResult.action === 'SKIP_SAME' ? 'Same price' : 'Higher price'} (in main project)`,
+                    currentPrice: priceResult.current_price,
+                    newPrice: rowPrice
+                  });
+                  continue; // Skip to next row
+                }
+                console.log(`✓ Main project price check passed - CSV price is lower or site not in main project`);
+              }
+              
+              // Check if we should update based on price (existing logic)
+              const shouldUpdatePrice = rowPrice > 0 && shouldUpdateBasedOnPrice(row, existingData, dupCheck.source as 'data_in_process' | 'data_final');
+              console.log(`shouldUpdatePrice (vs current system): ${shouldUpdatePrice}`);
+              
+              // Check if we should update based on other field differences (new logic)
+              const shouldUpdateFields = hasFieldUpdates(row, existingData, dupCheck.source as 'data_in_process' | 'data_final');
+              console.log(`shouldUpdateFields: ${shouldUpdateFields}`);
+              
+              if (shouldUpdatePrice || shouldUpdateFields) {
+                // Get all field updates (price + other fields)
+                const fieldUpdates = compareAndGetUpdates(row, existingData, dupCheck.source as 'data_in_process' | 'data_final');
                 
-                console.log(`[PRICE UPDATE] Row: ${row.websiteUrl}, publisher field: "${publisherValue}", isEmail: ${isEmail}`);
+                console.log(`[FIELD UPDATE] Row: ${row.websiteUrl}, updates:`, fieldUpdates);
+                console.log(`Will add to priceUpdatedDomains: ${shouldUpdatePrice}`);
                 
                 rowsToUpdateInCurrentSystem.push({
                   id: dupCheck.existingId!,
-                  price: rowPrice,
                   source: dupCheck.source,
-                  // Update BOTH contact and publisher fields to cover all cases
-                  // (record may have publisherMatched=true with publisherEmail, or just contactEmail)
-                  contactName: !isEmail && publisherValue ? publisherValue : undefined,
-                  contactEmail: isEmail ? publisherValue : undefined,
-                  publisherName: !isEmail && publisherValue ? publisherValue : undefined,
-                  publisherEmail: isEmail ? publisherValue : undefined
+                  updates: fieldUpdates,
+                  hasPriceImprovement: shouldUpdatePrice // Track if this update has a lower price
                 });
                 
-                console.log(`[PRICE UPDATE] Added to update queue: id=${dupCheck.existingId}, contactName=${!isEmail && publisherValue ? publisherValue : 'undefined'}, contactEmail=${isEmail ? publisherValue : 'undefined'}`);
-                priceUpdatedDomains.push({
-                  domain: row.websiteUrl,
-                  currentPrice: existingPrice,
-                  newPrice: rowPrice
-                });
-              } else if (rowPrice === existingPrice) {
-                // Same price - skip
+                // Track price updates for reporting (if price changed)
+                if (shouldUpdatePrice) {
+                  console.log(`✓ Adding to priceUpdatedDomains: ${row.websiteUrl}`);
+                  priceUpdatedDomains.push({
+                    domain: row.websiteUrl,
+                    currentPrice: existingPrice,
+                    newPrice: rowPrice
+                  });
+                } else {
+                  console.log(`✗ NOT adding to priceUpdatedDomains (only field updates, no price change)`);
+                }
+              } else if (rowPrice > 0) {
+                // Has price but no updates needed in current system
+                // Note: Main project price already checked above, so this is current system only
+                if (rowPrice === existingPrice) {
+                  priceSkippedDomains.push({
+                    domain: row.websiteUrl,
+                    reason: 'Same price (in current system)',
+                    currentPrice: existingPrice,
+                    newPrice: rowPrice
+                  });
+                } else {
+                  priceSkippedDomains.push({
+                    domain: row.websiteUrl,
+                    reason: 'Higher price (in current system)',
+                    currentPrice: existingPrice,
+                    newPrice: rowPrice
+                  });
+                }
+              }
+              // If no price and no field updates, track as skipped
+              else {
+                // Duplicate with no updates needed
                 priceSkippedDomains.push({
                   domain: row.websiteUrl,
-                  reason: 'Same price (in current system)',
-                  currentPrice: existingPrice,
-                  newPrice: rowPrice
-                });
-              } else {
-                // Higher price - skip
-                priceSkippedDomains.push({
-                  domain: row.websiteUrl,
-                  reason: 'Higher price (in current system)',
+                  reason: rowPrice > 0 ? 'No updates needed (in current system)' : 'Duplicate without price (in current system)',
                   currentPrice: existingPrice,
                   newPrice: rowPrice
                 });
               }
             }
           } else {
-            // Duplicate without price - skip (old behavior)
+            // Duplicate without price - track as skipped
+            console.log(`[${row.websiteUrl}] Is duplicate WITHOUT price, source: ${dupCheck.source} - tracking as skipped`);
+            const sourceLabel = dupCheck.source === 'main_project' || dupCheck.source === 'guest_blog_sites' || dupCheck.source === 'pending_sites_pending' 
+              ? 'in main project' 
+              : dupCheck.source === 'data_in_process' 
+              ? 'in current system (in process)' 
+              : dupCheck.source === 'data_final' 
+              ? 'in current system (final)' 
+              : 'in system';
+            priceSkippedDomains.push({
+              domain: row.websiteUrl,
+              reason: `Duplicate without price (${sourceLabel})`,
+              currentPrice: 0,
+              newPrice: 0
+            });
           }
         }
       } else {
@@ -237,29 +315,28 @@ export class UploadController {
           .filter(d => d.isDuplicate)
           .map(d => ({
             domain: d.websiteUrl,
-            source: d.source === 'main_project' ? 'Links Management App' : 
+            source: d.source === 'main_project' || d.source === 'guest_blog_sites' ? 'Links Management App' : 
+                    d.source === 'pending_sites_pending' ? 'Links Management App (Pending Sites)' :
                     d.source === 'data_in_process' ? 'Current System (In Process)' :
                     d.source === 'data_final' ? 'Current System (Final)' : 'Unknown'
           }));
 
         const totalDuplicates = duplicateCheck.duplicateCount + duplicatesInCSV.length;
         
-        // Count duplicates by source - EXCLUDE price-skipped domains to avoid double counting
+        // Count duplicates by source - EXCLUDE only price-updated domains
+        // Price-skipped domains should be included in their source counts
         const priceUpdateUrls = new Set(priceUpdatedDomains.map(d => d.domain.toLowerCase()));
-        const priceSkippedUrls = new Set(priceSkippedDomains.map(d => d.domain.toLowerCase()));
         
-        // Main project duplicates: only count those NOT in priceSkipped (to avoid double counting)
+        // Main project duplicates: exclude only price updates (include price-skipped)
         const duplicatesInMainProject = duplicateDomainsWithSource.filter(d => 
           d.source === 'Links Management App' && 
-          !priceSkippedUrls.has(d.domain.toLowerCase()) &&
           !priceUpdateUrls.has(d.domain.toLowerCase())
         ).length;
         
-        // Current system duplicates: exclude price updates AND price-skipped
+        // Current system duplicates: exclude only price updates (include price-skipped)
         const duplicatesInCurrentSystem = duplicateDomainsWithSource.filter(d => 
           d.source.startsWith('Current System') && 
-          !priceUpdateUrls.has(d.domain.toLowerCase()) &&
-          !priceSkippedUrls.has(d.domain.toLowerCase())
+          !priceUpdateUrls.has(d.domain.toLowerCase())
         ).length;
 
         res.status(200).json({
@@ -291,43 +368,30 @@ export class UploadController {
         return;
       }
 
-      // Handle case where we only have price updates (no new domains)
+      // Handle case where we only have field updates (no new domains)
       if (uniqueRows.length === 0 && rowsToUpdateInCurrentSystem.length > 0) {
-        // Update existing records in current system with lower prices AND contact info if provided
+        // Update existing records using enhanced field update logic
         for (const update of rowsToUpdateInCurrentSystem) {
-          console.log(`Updating price for ${update.source} record ${update.id}: ${update.price}, contactName: ${update.contactName}, contactEmail: ${update.contactEmail}`);
+          console.log(`[ENHANCED UPDATE - ONLY UPDATES] Updating ${update.source} record ${update.id} with:`, JSON.stringify(update.updates));
+          
           if (update.source === 'data_in_process') {
-            // Build update data - only include fields that have values
-            const updateData: any = { price: update.price };
-            if (update.contactName) updateData.contactName = update.contactName;
-            if (update.contactEmail) updateData.contactEmail = update.contactEmail;
-            
             await prisma.dataInProcess.update({
               where: { id: update.id },
-              data: updateData
+              data: update.updates
             });
           } else if (update.source === 'data_final') {
-            // Build update data - only include fields that have values
-            const updateData: any = { gbBasePrice: update.price };
-            if (update.contactName) updateData.contactName = update.contactName;
-            if (update.contactEmail) updateData.contactEmail = update.contactEmail;
-            if (update.publisherName) updateData.publisherName = update.publisherName;
-            if (update.publisherEmail) updateData.publisherEmail = update.publisherEmail;
-            
             // If contact info is being updated, reset publisherMatched so user can re-mark as publisher
-            if (update.contactEmail || update.contactName) {
-              updateData.publisherMatched = false;
+            if (update.updates.contactEmail || update.updates.contactName) {
+              update.updates.publisherMatched = false;
             }
-            
-            console.log(`[DATA_FINAL UPDATE] Updating record ${update.id} with:`, JSON.stringify(updateData));
             
             await prisma.dataFinal.update({
               where: { id: update.id },
-              data: updateData
+              data: update.updates
             });
-            
-            console.log(`[DATA_FINAL UPDATE] Successfully updated record ${update.id}`);
           }
+          
+          console.log(`[ENHANCED UPDATE - ONLY UPDATES] Successfully updated ${update.source} record ${update.id}`);
         }
 
         cleanupFile(filePath);
@@ -337,25 +401,24 @@ export class UploadController {
           .filter(d => d.isDuplicate)
           .map(d => ({
             domain: d.websiteUrl,
-            source: d.source === 'main_project' ? 'Links Management App' : 
+            source: d.source === 'main_project' || d.source === 'guest_blog_sites' ? 'Links Management App' : 
+                    d.source === 'pending_sites_pending' ? 'Links Management App (Pending Sites)' :
                     d.source === 'data_in_process' ? 'Current System (In Process)' :
                     d.source === 'data_final' ? 'Current System (Final)' : 'Unknown'
           }));
 
         const totalDuplicates = duplicateCheck.duplicateCount + duplicatesInCSV.length;
         const duplicatesInMainProject = duplicateDomainsWithSource.filter(d => d.source === 'Links Management App').length;
-        // Exclude price updates AND price-skipped from current system duplicates count (they're counted separately)
+        // Exclude only price updates from current system duplicates count
         const priceUpdateUrls = new Set(priceUpdatedDomains.map(d => d.domain.toLowerCase()));
-        const priceSkippedUrls = new Set(priceSkippedDomains.map(d => d.domain.toLowerCase()));
         const duplicatesInCurrentSystem = duplicateDomainsWithSource.filter(d => 
           d.source.startsWith('Current System') && 
-          !priceUpdateUrls.has(d.domain.toLowerCase()) &&
-          !priceSkippedUrls.has(d.domain.toLowerCase())
+          !priceUpdateUrls.has(d.domain.toLowerCase())
         ).length;
 
         res.status(200).json({
           success: true,
-          message: `Updated prices for ${rowsToUpdateInCurrentSystem.length} existing record(s).`,
+          message: `Updated ${priceUpdatedDomains.length > 0 ? 'prices for' : ''} ${rowsToUpdateInCurrentSystem.length} existing record(s).`,
           data: {
             summary: {
               totalRows: parsedData.totalRows,
@@ -368,7 +431,7 @@ export class UploadController {
               duplicatesInMainProject: duplicatesInMainProject,
               duplicatesInCurrentSystem: duplicatesInCurrentSystem,
               priceSkipped: priceSkippedDomains.length,
-              priceUpdates: rowsToUpdateInCurrentSystem.length
+              priceUpdates: priceUpdatedDomains.length
             },
             priceUpdatedDomains: priceUpdatedDomains,
             priceSkippedDomains: priceSkippedDomains
@@ -482,69 +545,77 @@ export class UploadController {
           }
         }
         
-        await DataInProcessService.bulkCreate(
-          uniqueRows.map(row => {
-            const publisherMatch = publisherMatchResults.get(row.websiteUrl);
-            const publisherEmailKey = publisherMatch?.publisherEmail?.toLowerCase().trim();
-            const localPending = publisherEmailKey ? localPendingPublisherByEmail.get(publisherEmailKey) : undefined;
-            const useLocalPending = Boolean(localPending) && publisherMatch && !publisherMatch.matched && publisherMatch.publisherEmail;
+        console.log('[UPLOAD] Creating DataInProcess records. User ID:', req.user?.id, 'User Role:', req.user?.role);
+        console.log('[UPLOAD] Number of unique rows to insert:', uniqueRows.length);
+        
+        const recordsToCreate = uniqueRows.map(row => {
+          const publisherMatch = publisherMatchResults.get(row.websiteUrl);
+          const publisherEmailKey = publisherMatch?.publisherEmail?.toLowerCase().trim();
+          const localPending = publisherEmailKey ? localPendingPublisherByEmail.get(publisherEmailKey) : undefined;
+          const useLocalPending = Boolean(localPending) && publisherMatch && !publisherMatch.matched && publisherMatch.publisherEmail;
 
-            const finalPublisherId = useLocalPending ? localPending!.publisherId : publisherMatch?.publisherId;
-            const finalPublisherMatched = useLocalPending ? true : (publisherMatch?.matched || false);
-            const finalPublisherName = useLocalPending ? (localPending!.publisherName || publisherMatch?.publisherName) : publisherMatch?.publisherName;
-            const finalPublisherEmail = useLocalPending ? (localPending!.publisherEmail || publisherMatch?.publisherEmail) : publisherMatch?.publisherEmail;
+          const finalPublisherId = useLocalPending ? localPending!.publisherId : publisherMatch?.publisherId;
+          const finalPublisherMatched = useLocalPending ? true : (publisherMatch?.matched || false);
+          const finalPublisherName = useLocalPending ? (localPending!.publisherName || publisherMatch?.publisherName) : publisherMatch?.publisherName;
+          const finalPublisherEmail = useLocalPending ? (localPending!.publisherEmail || publisherMatch?.publisherEmail) : publisherMatch?.publisherEmail;
 
-            return {
-              ...row,
-              price: row.price ? parseFloat(row.price) : undefined,
-              uploadTaskId: uploadTask.id,
-              publisherId: finalPublisherId,
-              publisherMatched: finalPublisherMatched,
-              publisherName: finalPublisherName,
-              publisherEmail: finalPublisherEmail,
-              contactName: !finalPublisherMatched && row.publisher && !row.publisher.includes('@') ? row.publisher : undefined,
-              contactEmail: !finalPublisherMatched && row.publisher && row.publisher.includes('@') ? row.publisher : undefined
-            };
-          })
-        );
+          return {
+            ...row,
+            price: row.price ? parseFloat(row.price) : undefined,
+            liBasePrice: row.liBasePrice ? parseFloat(row.liBasePrice) : undefined,
+            uploadTaskId: uploadTask.id,
+            publisherId: finalPublisherId,
+            publisherMatched: finalPublisherMatched,
+            publisherName: finalPublisherName,
+            publisherEmail: finalPublisherEmail,
+            contactName: !finalPublisherMatched && row.publisher && !row.publisher.includes('@') ? row.publisher : undefined,
+            contactEmail: !finalPublisherMatched && row.publisher && row.publisher.includes('@') ? row.publisher : undefined,
+            uploadedBy: req.user?.id
+          };
+        });
+        
+        console.log('[UPLOAD] Sample record to create:', JSON.stringify(recordsToCreate[0]));
+        
+        await DataInProcessService.bulkCreate(recordsToCreate);
+        
+        console.log('[UPLOAD] Successfully created', recordsToCreate.length, 'records in DataInProcess');
       }
 
-      // Update existing records in current system with lower prices AND contact/publisher info if provided
+      // Update existing records in current system with enhanced field updates
       if (rowsToUpdateInCurrentSystem.length > 0) {
+        const userRole = req.user?.role;
+        
         for (const update of rowsToUpdateInCurrentSystem) {
-          console.log(`Updating price for ${update.source} record ${update.id}: ${update.price}, contactName: ${update.contactName}, contactEmail: ${update.contactEmail}`);
+          // Only set uploadedBy if:
+          // 1. User is SUPER_ADMIN (can update anything), OR
+          // 2. User is CONTRIBUTOR AND they provided a lower price (hasPriceImprovement)
+          if (userRole === 'SUPER_ADMIN' || (userRole === 'CONTRIBUTOR' && update.hasPriceImprovement)) {
+            update.updates.uploadedBy = req.user?.id;
+            console.log(`[ENHANCED UPDATE] Setting uploadedBy for ${userRole} (hasPriceImprovement: ${update.hasPriceImprovement})`);
+          } else {
+            console.log(`[ENHANCED UPDATE] NOT setting uploadedBy for ${userRole} (hasPriceImprovement: ${update.hasPriceImprovement})`);
+          }
+          
+          console.log(`[ENHANCED UPDATE] Updating ${update.source} record ${update.id} with:`, JSON.stringify(update.updates));
+          
           if (update.source === 'data_in_process') {
-            // Build update data - only include fields that have values
-            const updateData: any = { price: update.price };
-            if (update.contactName) updateData.contactName = update.contactName;
-            if (update.contactEmail) updateData.contactEmail = update.contactEmail;
-            
             await prisma.dataInProcess.update({
               where: { id: update.id },
-              data: updateData
+              data: update.updates
             });
           } else if (update.source === 'data_final') {
-            // Build update data - only include fields that have values
-            const updateData: any = { gbBasePrice: update.price };
-            if (update.contactName) updateData.contactName = update.contactName;
-            if (update.contactEmail) updateData.contactEmail = update.contactEmail;
-            if (update.publisherName) updateData.publisherName = update.publisherName;
-            if (update.publisherEmail) updateData.publisherEmail = update.publisherEmail;
-            
             // If contact info is being updated, reset publisherMatched so user can re-mark as publisher
-            if (update.contactEmail || update.contactName) {
-              updateData.publisherMatched = false;
+            if (update.updates.contactEmail || update.updates.contactName) {
+              update.updates.publisherMatched = false;
             }
-            
-            console.log(`[DATA_FINAL UPDATE 2] Updating record ${update.id} with:`, JSON.stringify(updateData));
             
             await prisma.dataFinal.update({
               where: { id: update.id },
-              data: updateData
+              data: update.updates
             });
-            
-            console.log(`[DATA_FINAL UPDATE 2] Successfully updated record ${update.id}`);
           }
+          
+          console.log(`[ENHANCED UPDATE] Successfully updated ${update.source} record ${update.id}`);
         }
       }
 
@@ -579,20 +650,21 @@ export class UploadController {
         .filter(d => d.isDuplicate)
         .map(d => ({
           domain: d.websiteUrl,
-          source: d.source === 'main_project' ? 'Links Management App' : 
+          source: (d.source === 'main_project' || d.source === 'guest_blog_sites' || d.source === 'pending_sites_pending') ? 'Links Management App' : 
                   d.source === 'data_in_process' ? 'Current System (In Process)' :
                   d.source === 'data_final' ? 'Current System (Final)' : 'Unknown'
         }));
 
-      // Count duplicates by source - EXCLUDE price-skipped domains to avoid double counting
+      // Count duplicates by source - EXCLUDE price-updated AND price-skipped domains
+      // to avoid double-counting (they're already counted in priceUpdates/priceSkipped)
       const priceUpdateUrls = new Set(priceUpdatedDomains.map(d => d.domain.toLowerCase()));
       const priceSkippedUrls = new Set(priceSkippedDomains.map(d => d.domain.toLowerCase()));
       
-      // Main project duplicates: only count those NOT in priceSkipped (to avoid double counting)
+      // Main project duplicates: exclude price updates AND price-skipped
       const duplicatesInMainProject = duplicateDomainsWithSource.filter(d => 
         d.source === 'Links Management App' && 
-        !priceSkippedUrls.has(d.domain.toLowerCase()) &&
-        !priceUpdateUrls.has(d.domain.toLowerCase())
+        !priceUpdateUrls.has(d.domain.toLowerCase()) &&
+        !priceSkippedUrls.has(d.domain.toLowerCase())
       ).length;
       
       // Current system duplicates: exclude price updates AND price-skipped
@@ -663,6 +735,21 @@ export class UploadController {
       
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', 'attachment; filename=guest_blog_template_with_price.csv');
+      res.send(template);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Download comprehensive CSV template with all fields
+   */
+  static downloadFullTemplate(_req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const template = CSVParserService.generateFullTemplate();
+      
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename=guest_blog_full_template.csv');
       res.send(template);
     } catch (error) {
       next(error);

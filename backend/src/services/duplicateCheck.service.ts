@@ -61,113 +61,156 @@ export class DuplicateCheckService {
       existingId?: string;
       source?: string;
       existingPrice?: number | null;
+      existingData?: any;
     }> = [];
 
-    // Check in main project (bulk)
-    const mainProjectDuplicates = await MainProjectAPIService.checkDuplicates(normalizedUrls);
-
-    // Check in local database - include price for comparison
+    // STEP 1: Check in CURRENT TOOL first (data_in_process and data_final)
     const dataInProcessRecords = await prisma.dataInProcess.findMany({
       where: {
         websiteUrl: { in: normalizedUrls }
       },
-      select: { websiteUrl: true, id: true, price: true }
+      select: { 
+        websiteUrl: true, 
+        id: true, 
+        price: true,
+        da: true,
+        dr: true,
+        traffic: true,
+        ss: true,
+        category: true,
+        country: true,
+        language: true,
+        tat: true,
+        publisherName: true,
+        publisherEmail: true,
+        contactName: true,
+        contactEmail: true
+      }
     });
 
     // Only check unpushed records in dataFinal (mainProjectId is null)
-    // Pushed records should NOT block new uploads - they can be re-uploaded with new prices
     const dataFinalRecords = await prisma.dataFinal.findMany({
       where: {
         websiteUrl: { in: normalizedUrls },
         mainProjectId: null  // Only unpushed records count as duplicates
       },
-      select: { websiteUrl: true, id: true, gbBasePrice: true }
+      select: { 
+        websiteUrl: true, 
+        id: true, 
+        gbBasePrice: true,
+        da: true,
+        dr: true,
+        traffic: true,
+        ss: true,
+        category: true,
+        country: true,
+        language: true,
+        tat: true,
+        publisherName: true,
+        publisherEmail: true,
+        contactName: true,
+        contactEmail: true
+      }
     });
 
-    // Create lookup maps with price info - keep the record with LOWEST price for each URL
-    const dataInProcessMap = new Map<string, { id: string; price: number | null }>();
+    // Create lookup maps - keep the record with LOWEST price for each URL
+    const dataInProcessMap = new Map<string, any>();
     for (const r of dataInProcessRecords) {
       const existing = dataInProcessMap.get(r.websiteUrl);
-      // Keep the record with the lowest price (or first one if no price)
       if (!existing || (r.price !== null && (existing.price === null || r.price < existing.price))) {
-        dataInProcessMap.set(r.websiteUrl, { id: r.id, price: r.price });
+        dataInProcessMap.set(r.websiteUrl, r);
       }
     }
     
-    const dataFinalMap = new Map<string, { id: string; price: number | null }>();
+    const dataFinalMap = new Map<string, any>();
     for (const r of dataFinalRecords) {
       const existing = dataFinalMap.get(r.websiteUrl);
-      // Keep the record with the lowest price (or first one if no price)
-      if (!existing || (r.gbBasePrice !== null && (existing.price === null || r.gbBasePrice < existing.price))) {
-        dataFinalMap.set(r.websiteUrl, { id: r.id, price: r.gbBasePrice });
+      if (!existing || (r.gbBasePrice !== null && (existing.gbBasePrice === null || r.gbBasePrice < existing.gbBasePrice))) {
+        dataFinalMap.set(r.websiteUrl, r);
       }
     }
 
-    // Debug logging
-    console.log('=== DUPLICATE CHECK DEBUG ===');
-    console.log('DataInProcess records found:', dataInProcessRecords.length);
-    dataInProcessRecords.forEach(r => console.log(`  - ${r.websiteUrl}: $${r.price}`));
-    console.log('DataInProcess map (lowest prices):');
-    dataInProcessMap.forEach((v, k) => console.log(`  - ${k}: $${v.price}`));
-    console.log('=============================');
-
-    // Check each URL - find the source with the LOWEST price
+    // STEP 2: Identify URLs NOT in current tool (need to check main project)
+    const urlsNotInCurrentTool: string[] = [];
+    const currentToolMap = new Map<string, { source: string; id: string; price: number | null; existingData: any }>();
+    
     for (const url of normalizedUrls) {
-      const mainProjectDup = mainProjectDuplicates.find(d => d.websiteUrl === url);
       const dataInProcessRecord = dataInProcessMap.get(url);
       const dataFinalRecord = dataFinalMap.get(url);
-
-      // Collect all sources where this URL exists
-      const sources: Array<{ source: string; id?: string; price: number | null }> = [];
-      
-      if (mainProjectDup?.isDuplicate) {
-        sources.push({
-          source: 'main_project',
-          id: mainProjectDup.existingId,
-          price: mainProjectDup.existingPrice || null
-        });
-      }
       
       if (dataInProcessRecord) {
-        sources.push({
+        // Found in data_in_process - prioritize this
+        currentToolMap.set(url, {
           source: 'data_in_process',
           id: dataInProcessRecord.id,
-          price: dataInProcessRecord.price
+          price: dataInProcessRecord.price,
+          existingData: dataInProcessRecord
         });
-      }
-      
-      if (dataFinalRecord) {
-        sources.push({
+      } else if (dataFinalRecord) {
+        // Found in data_final
+        currentToolMap.set(url, {
           source: 'data_final',
           id: dataFinalRecord.id,
-          price: dataFinalRecord.price
-        });
-      }
-
-      if (sources.length === 0) {
-        // Not a duplicate anywhere
-        duplicates.push({
-          websiteUrl: url,
-          isDuplicate: false
+          price: dataFinalRecord.gbBasePrice,
+          existingData: dataFinalRecord
         });
       } else {
-        // Find the source with the LOWEST price (most relevant for comparison)
-        // If prices are null, treat as Infinity for comparison
-        const bestSource = sources.reduce((best, current) => {
-          const bestPrice = best.price ?? Infinity;
-          const currentPrice = current.price ?? Infinity;
-          return currentPrice < bestPrice ? current : best;
-        });
+        // NOT in current tool - need to check main project
+        urlsNotInCurrentTool.push(url);
+      }
+    }
 
-        console.log(`URL ${url}: Found in ${sources.length} sources, using ${bestSource.source} with price $${bestSource.price}`);
+    console.log('=== DUPLICATE CHECK PRIORITY LOGIC ===');
+    console.log('Total URLs to check:', normalizedUrls.length);
+    console.log('Found in current tool:', currentToolMap.size);
+    console.log('Need to check main project:', urlsNotInCurrentTool.length);
+    console.log('======================================');
 
+    // STEP 3: Check main project (both guest blog sites AND pending sites) ONLY for URLs not in current tool
+    let mainProjectDuplicates: Array<{ websiteUrl: string; isDuplicate: boolean; existingId?: string; existingPrice?: number | null; source?: string }> = [];
+    if (urlsNotInCurrentTool.length > 0) {
+      mainProjectDuplicates = await MainProjectAPIService.checkDuplicatesAllModules(urlsNotInCurrentTool);
+    }
+
+    // STEP 4: Build final results with priority: Current Tool > Main Project
+    for (const url of normalizedUrls) {
+      const currentToolRecord = currentToolMap.get(url);
+      
+      if (currentToolRecord) {
+        // Found in current tool - use this (don't check main project)
         duplicates.push({
           websiteUrl: url,
           isDuplicate: true,
-          existingId: bestSource.id,
-          source: bestSource.source,
-          existingPrice: bestSource.price
+          existingId: currentToolRecord.id,
+          source: currentToolRecord.source,
+          existingPrice: currentToolRecord.price,
+          existingData: currentToolRecord.existingData
         });
+        console.log(`✓ ${url}: Found in CURRENT TOOL (${currentToolRecord.source}) with price $${currentToolRecord.price}`);
+      } else {
+        // Not in current tool - check main project result
+        const mainProjectDup = mainProjectDuplicates.find(d => d.websiteUrl === url);
+        
+        if (mainProjectDup?.isDuplicate) {
+          // Found in main project
+          duplicates.push({
+            websiteUrl: url,
+            isDuplicate: true,
+            existingId: mainProjectDup.existingId,
+            source: mainProjectDup.source || 'main_project',
+            existingPrice: mainProjectDup.existingPrice || null,
+            existingData: null
+          });
+          const sourceModule = mainProjectDup.source || 'main_project';
+          console.log(`✓ ${url}: Found in MAIN PROJECT (${sourceModule}) with price $${mainProjectDup.existingPrice}`);
+        } else {
+          // Not found anywhere - new domain
+          duplicates.push({
+            websiteUrl: url,
+            isDuplicate: false
+          });
+          console.log(`✓ ${url}: NEW DOMAIN (not in current tool or main project)`);
+        }
       }
     }
 

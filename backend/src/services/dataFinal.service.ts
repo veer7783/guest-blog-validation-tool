@@ -8,16 +8,23 @@ interface DataFinalFilters {
   status?: string;
   negotiationStatus?: string;
   reachedBy?: string;
+  userId?: string;
+  userRole?: string;
 }
 
 interface DataFinalUpdateRequest {
   publisherName?: string;
   publisherEmail?: string;
   publisherContact?: string;
+  publisherId?: string;
+  publisherMatched?: boolean;
+  contactName?: string;
+  contactEmail?: string;
   da?: number;
   dr?: number;
   traffic?: number;
   ss?: number;
+  keywords?: number;
   category?: string;
   country?: string;
   language?: string;
@@ -33,12 +40,17 @@ export class DataFinalService {
    * Get all data final records with pagination
    */
   static async getAll(filters: DataFinalFilters) {
-    const { status, negotiationStatus, reachedBy } = filters;
+    const { status, negotiationStatus, reachedBy, userId, userRole } = filters;
 
     const where: any = {};
     if (status) where.status = status;
     if (negotiationStatus) where.negotiationStatus = negotiationStatus;
     if (reachedBy) where.reachedBy = reachedBy;
+    
+    // Filter by uploaded user for Contributor role
+    if (userId && userRole === 'CONTRIBUTOR') {
+      where.uploadedBy = userId;
+    }
     
     // Only show unpushed sites (sites not yet transferred to main project)
     where.mainProjectId = null;
@@ -104,6 +116,36 @@ export class DataFinalService {
       throw new AppError('Record not found', 404);
     }
 
+    // If publisher email is being changed, validate against main tool
+    if (updateData.publisherEmail && updateData.publisherEmail !== existing.publisherEmail) {
+      const MainProjectAPIService = require('./mainProjectAPI.service').MainProjectAPIService;
+      const publishersResult = await MainProjectAPIService.fetchPublishers();
+      
+      if (publishersResult.success && publishersResult.publishers) {
+        const emailLower = updateData.publisherEmail.toLowerCase().trim();
+        const matchedPublisher = publishersResult.publishers.find((p: any) => 
+          p.email?.toLowerCase().trim() === emailLower
+        );
+
+        if (matchedPublisher) {
+          // Email matches - update as publisher
+          updateData.publisherId = matchedPublisher.id;
+          updateData.publisherMatched = true;
+          updateData.publisherName = updateData.publisherName || matchedPublisher.publisherName;
+          updateData.contactEmail = undefined;
+          updateData.contactName = undefined;
+        } else {
+          // Email doesn't match - convert to contact
+          updateData.publisherId = undefined;
+          updateData.publisherMatched = false;
+          updateData.contactEmail = updateData.publisherEmail;
+          updateData.contactName = updateData.publisherName || 'Contact';
+          updateData.publisherEmail = undefined;
+          updateData.publisherName = undefined;
+        }
+      }
+    }
+
     // Get user info for tracking
     const user = await prisma.user.findUnique({
       where: { id: updatedBy },
@@ -120,6 +162,7 @@ export class DataFinalService {
         dr: updateData.dr,
         traffic: updateData.traffic,
         ss: updateData.ss,
+        keywords: updateData.keywords !== undefined ? updateData.keywords : null,
         category: updateData.category,
         country: updateData.country,
         language: updateData.language,
@@ -181,12 +224,21 @@ export class DataFinalService {
 
   /**
    * Get all pushed records (for Pushed Data page)
+   * SUPER_ADMIN: See all pushed records
+   * CONTRIBUTOR: See only their own uploaded records
    */
-  static async getPushedRecords() {
+  static async getPushedRecords(userId?: string, userRole?: string) {
+    const where: any = {
+      mainProjectId: { not: null } // Only pushed records
+    };
+    
+    // CONTRIBUTOR: Filter by their uploaded records
+    if (userId && userRole === 'CONTRIBUTOR') {
+      where.uploadedBy = userId;
+    }
+    
     return await prisma.dataFinal.findMany({
-      where: {
-        mainProjectId: { not: null } // Only pushed records
-      },
+      where,
       orderBy: {
         pushedAt: 'desc'
       },
@@ -333,5 +385,209 @@ export class DataFinalService {
         console.log('Available records:', originalRecords.map(r => r.websiteUrl));
       }
     }
+  }
+
+  /**
+   * Get records by publisher for export
+   */
+  static async getRecordsByPublisher(filters: {
+    publisherId?: string;
+    publisherEmail?: string;
+  }) {
+    const where: any = {};
+    
+    if (filters.publisherId) {
+      where.publisherId = filters.publisherId;
+    } else if (filters.publisherEmail) {
+      // Search by both publisher email and contact email
+      where.OR = [
+        { publisherEmail: filters.publisherEmail },
+        { contactEmail: filters.publisherEmail }
+      ];
+    }
+
+    return await prisma.dataFinal.findMany({
+      where,
+      orderBy: {
+        createdAt: 'desc'
+      },
+      include: {
+        reachedByUser: {
+          select: {
+            firstName: true,
+            lastName: true,
+            role: true
+          }
+        },
+        pushedByUser: {
+          select: {
+            firstName: true,
+            lastName: true,
+            role: true
+          }
+        }
+      }
+    });
+  }
+
+  /**
+   * Generate CSV content for publisher export
+   */
+  static generatePublisherCSV(records: any[]): string {
+    const headers = [
+      'Website URL',
+      'Publisher Name',
+      'Publisher Email',
+      'DA',
+      'DR',
+      'Traffic',
+      'SS',
+      'Keywords',
+      'Category',
+      'Country',
+      'Language',
+      'TAT',
+      'GB Base Price',
+      'LI Base Price',
+      'Status',
+      'Negotiation Status',
+      'Reached By',
+      'Reached At',
+      'Created At',
+      'Pushed Status',
+      'Pushed At',
+      'Main Project ID'
+    ];
+
+    const csvRows = [headers.join(',')];
+
+    records.forEach(record => {
+      // Determine the best name and email to display
+      const isTemporaryPublisher = record.publisherId?.startsWith('pending_');
+      let displayName, displayEmail;
+      
+      if (record.contactName && record.contactEmail) {
+        displayName = record.contactName;
+        displayEmail = record.contactEmail;
+      } else if (record.publisherName && record.publisherEmail && !isTemporaryPublisher) {
+        displayName = record.publisherName;
+        displayEmail = record.publisherEmail;
+      } else if (record.contactName || record.contactEmail) {
+        displayName = record.contactName || (record.contactEmail ? record.contactEmail.split('@')[0] : '');
+        displayEmail = record.contactEmail || '';
+      } else {
+        displayName = record.publisherName || (record.publisherEmail ? record.publisherEmail.split('@')[0] : '');
+        displayEmail = record.publisherEmail || '';
+      }
+      
+      const row = [
+        `"${record.websiteUrl || ''}"`,
+        `"${displayName || ''}"`,
+        `"${displayEmail || ''}"`,
+        record.da || '',
+        record.dr || '',
+        record.traffic || '',
+        record.ss || '',
+        record.keywords || '',
+        `"${record.category || ''}"`,
+        `"${record.country || ''}"`,
+        `"${record.language || ''}"`,
+        `"${record.tat || ''}"`,
+        record.gbBasePrice || '',
+        record.liBasePrice || '',
+        `"${record.status || ''}"`,
+        `"${record.negotiationStatus?.replace('_', ' ') || ''}"`,
+        `"${record.reachedByUser ? `${record.reachedByUser.firstName} ${record.reachedByUser.lastName}` : record.reachedByName || ''}"`,
+        record.reachedAt ? new Date(record.reachedAt).toISOString() : '',
+        record.createdAt ? new Date(record.createdAt).toISOString() : '',
+        record.mainProjectId ? 'Pushed' : 'Not Pushed',
+        record.pushedAt ? new Date(record.pushedAt).toISOString() : '',
+        `"${record.mainProjectId || ''}"`
+      ];
+      csvRows.push(row.join(','));
+    });
+
+    return csvRows.join('\n');
+  }
+
+  /**
+   * Get unique publishers for export dropdown
+   */
+  static async getUniquePublishers() {
+    // Only get publishers from records that are actually in Data Final (not pushed yet)
+    const records = await prisma.dataFinal.findMany({
+      select: {
+        publisherId: true,
+        publisherName: true,
+        publisherEmail: true,
+        contactName: true,
+        contactEmail: true,
+        publisherMatched: true,
+        mainProjectId: true
+      },
+      where: {
+        AND: [
+          {
+            OR: [
+              { publisherName: { not: null } },
+              { publisherEmail: { not: null } },
+              { contactName: { not: null } },
+              { contactEmail: { not: null } }
+            ]
+          },
+          {
+            mainProjectId: null // Only unpushed records (visible in Data Final)
+          }
+        ]
+      }
+    });
+
+    // Group by email (contact email preferred, then publisher email)
+    const publisherMap = new Map();
+    
+    records.forEach(record => {
+      // Prioritize contact information over temporary publisher data
+      let email, name, isMatched;
+      
+      // Check if publisher data is temporary (starts with 'pending_')
+      const isTemporaryPublisher = record.publisherId?.startsWith('pending_');
+      
+      if (record.contactEmail && record.contactName) {
+        // Use contact information if available
+        email = record.contactEmail;
+        name = record.contactName;
+        isMatched = false; // Contact, not matched publisher
+      } else if (record.publisherEmail && record.publisherName && !isTemporaryPublisher) {
+        // Use publisher information if it's not temporary
+        email = record.publisherEmail;
+        name = record.publisherName;
+        isMatched = record.publisherMatched;
+      } else if (record.contactEmail) {
+        // Use contact email with fallback name
+        email = record.contactEmail;
+        name = record.contactName || record.publisherName || email.split('@')[0];
+        isMatched = false;
+      } else if (record.publisherEmail) {
+        // Use publisher email with fallback name
+        email = record.publisherEmail;
+        name = record.publisherName || email.split('@')[0];
+        isMatched = record.publisherMatched;
+      }
+      
+      if (email && name) {
+        if (!publisherMap.has(email)) {
+          publisherMap.set(email, {
+            id: record.publisherId,
+            email: email,
+            name: name,
+            isMatched: isMatched,
+            recordCount: 0
+          });
+        }
+        publisherMap.get(email).recordCount++;
+      }
+    });
+
+    return Array.from(publisherMap.values()).sort((a, b) => a.name.localeCompare(b.name));
   }
 }

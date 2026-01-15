@@ -3,6 +3,7 @@ import { AuthRequest } from '../types';
 import { DataFinalService } from '../services/dataFinal.service';
 import { MainProjectAPIService } from '../services/mainProjectAPI.service';
 import { ActivityLogService } from '../services/activityLog.service';
+import { PublisherSyncService } from '../services/publisherSync.service';
 
 export class DataFinalController {
   /**
@@ -10,13 +11,14 @@ export class DataFinalController {
    */
   static async getAll(req: AuthRequest, res: Response, next: NextFunction) {
     try {
+      const userId = req.user?.id;
       const userRole = req.user!.role;
 
-      // Only Super Admin can access Data Final
-      if (userRole !== 'SUPER_ADMIN') {
+      // Allow Super Admin and Contributor to access Data Final
+      if (userRole !== 'SUPER_ADMIN' && userRole !== 'CONTRIBUTOR') {
         res.status(403).json({
           success: false,
-          message: 'Only Super Admin can access Data Final'
+          message: 'Access denied'
         });
         return;
       }
@@ -32,7 +34,9 @@ export class DataFinalController {
         limit,
         status,
         negotiationStatus,
-        reachedBy
+        reachedBy,
+        userId,
+        userRole
       });
 
       res.status(200).json({
@@ -136,18 +140,19 @@ export class DataFinalController {
    */
   static async getPushedRecords(req: AuthRequest, res: Response, next: NextFunction) {
     try {
+      const userId = req.user!.id;
       const userRole = req.user!.role;
 
-      // Only Super Admin can access
-      if (userRole !== 'SUPER_ADMIN') {
+      // Allow Super Admin and Contributor to access
+      if (userRole !== 'SUPER_ADMIN' && userRole !== 'CONTRIBUTOR') {
         res.status(403).json({
           success: false,
-          message: 'Only Super Admin can access Pushed Data'
+          message: 'Only Super Admin and Contributors can access Pushed Data'
         });
         return;
       }
 
-      const records = await DataFinalService.getPushedRecords();
+      const records = await DataFinalService.getPushedRecords(userId, userRole);
 
       res.json({
         success: true,
@@ -260,11 +265,13 @@ export class DataFinalController {
       console.log('User Role:', userRole);
       console.log('Record IDs:', recordIds);
 
-      // Only Super Admin can push to main project
-      if (userRole !== 'SUPER_ADMIN') {
+      // Allow Super Admin and Contributor to push to main project
+      // CONTRIBUTOR: All sites go to pending module for approval
+      // SUPER_ADMIN: New sites direct import, lower price to pending
+      if (userRole !== 'SUPER_ADMIN' && userRole !== 'CONTRIBUTOR') {
         res.status(403).json({
           success: false,
-          message: 'Only Super Admin can push to main project'
+          message: 'Only Super Admin and Contributors can push to main project'
         });
         return;
       }
@@ -338,9 +345,9 @@ export class DataFinalController {
       
       console.log('Duplicate check results:', JSON.stringify(duplicateCheck, null, 2));
       
-      // Split records into two groups:
-      // 1. New sites (not in main project) -> direct import
-      // 2. Sites with lower price -> submit for approval
+      // Split records based on user role:
+      // CONTRIBUTOR: ALL sites go to pending module (no direct import)
+      // SUPER_ADMIN: New sites -> direct import, lower price -> pending
       const newSites: typeof records = [];
       const lowerPriceSites: typeof records = [];
       const skippedSites: Array<{ site_url: string; reason: string }> = [];
@@ -350,6 +357,14 @@ export class DataFinalController {
         
         console.log(`Processing ${record.websiteUrl}: dupInfo=${JSON.stringify(dupInfo)}, gbBasePrice=${record.gbBasePrice}, publisherEmail=${record.publisherEmail}, publisherName=${record.publisherName}, publisherMatched=${record.publisherMatched}`);
         
+        // CONTRIBUTOR: All sites go to pending for approval
+        if (userRole === 'CONTRIBUTOR') {
+          lowerPriceSites.push(record);
+          console.log(`[CONTRIBUTOR] ${record.websiteUrl} -> Pending for approval`);
+          continue;
+        }
+        
+        // SUPER_ADMIN: Original logic
         if (!dupInfo || !dupInfo.isDuplicate) {
           // New site - goes directly to main table
           newSites.push(record);
@@ -394,6 +409,11 @@ export class DataFinalController {
         if (directImportResult.pushedCount > 0) {
           const importedSites = newSites.slice(0, directImportResult.pushedCount).map(s => ({ site_url: s.websiteUrl }));
           await DataFinalService.markAsPushed(importedSites, newSites, userId);
+          
+          // Sync publishers for directly imported sites
+          console.log('[PUSH] Syncing publishers for directly imported sites...');
+          const directSyncResult = await PublisherSyncService.syncPublishersForRecords(newSites);
+          console.log(`[PUSH] Direct import publisher sync: ${directSyncResult.synced} records synced`);
         }
       }
       
@@ -406,6 +426,11 @@ export class DataFinalController {
         // Mark submitted records as pushed (pending approval)
         if (approvalResult.details.submitted && approvalResult.details.submitted.length > 0) {
           await DataFinalService.markAsPushed(approvalResult.details.submitted, lowerPriceSites, userId);
+          
+          // Sync publishers for submitted sites
+          console.log('[PUSH] Syncing publishers for submitted sites...');
+          const approvalSyncResult = await PublisherSyncService.syncPublishersForRecords(lowerPriceSites);
+          console.log(`[PUSH] Approval publisher sync: ${approvalSyncResult.synced} records synced`);
         }
         
         // Add any skipped from approval to our skipped list
@@ -478,6 +503,225 @@ export class DataFinalController {
       res.json({
         success: true,
         data: responseData
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Export data by publisher (CSV format)
+   */
+  static async exportByPublisher(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const userRole = req.user!.role;
+      const userId = req.user!.id;
+
+      // Only Super Admin can export data
+      if (userRole !== 'SUPER_ADMIN') {
+        res.status(403).json({
+          success: false,
+          message: 'Only Super Admin can export data'
+        });
+        return;
+      }
+
+      const { publisherId, publisherEmail, format = 'csv' } = req.query;
+
+      if (!publisherId && !publisherEmail) {
+        res.status(400).json({
+          success: false,
+          message: 'Publisher ID or Publisher Email is required'
+        });
+        return;
+      }
+
+      // Get records for the specific publisher
+      const records = await DataFinalService.getRecordsByPublisher({
+        publisherId: publisherId as string,
+        publisherEmail: publisherEmail as string
+      });
+
+      if (records.length === 0) {
+        res.status(404).json({
+          success: false,
+          message: 'No records found for this publisher'
+        });
+        return;
+      }
+
+      // Generate CSV content
+      const csvContent = DataFinalService.generatePublisherCSV(records);
+      
+      // Get publisher name for filename - prioritize contact info over temporary publisher data
+      let publisherName = 'Unknown';
+      if (records.length > 0) {
+        const record = records[0];
+        const isTemporaryPublisher = record.publisherId?.startsWith('pending_');
+        
+        if (record.contactName) {
+          publisherName = record.contactName;
+        } else if (record.publisherName && !isTemporaryPublisher) {
+          publisherName = record.publisherName;
+        } else if (record.contactEmail) {
+          publisherName = record.contactEmail.split('@')[0];
+        } else if (record.publisherEmail) {
+          publisherName = record.publisherEmail.split('@')[0];
+        }
+      }
+      
+      const sanitizedName = publisherName.replace(/[^a-zA-Z0-9]/g, '_');
+      const filename = `publisher_${sanitizedName}_export_${new Date().toISOString().split('T')[0]}.csv`;
+
+      // Log activity
+      await ActivityLogService.logFromRequest(
+        req,
+        userId,
+        'DATA_FINAL_EXPORTED',
+        'DataFinal',
+        publisherId as string || publisherEmail as string,
+        { 
+          publisherName,
+          recordCount: records.length,
+          exportType: 'publisher_wise'
+        }
+      );
+
+      // Set headers for CSV download
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.send(csvContent);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Get unique publishers for export dropdown
+   */
+  static async getUniquePublishers(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const userRole = req.user!.role;
+
+      // Only Super Admin can access
+      if (userRole !== 'SUPER_ADMIN') {
+        res.status(403).json({
+          success: false,
+          message: 'Only Super Admin can access publisher list'
+        });
+        return;
+      }
+
+      const publishers = await DataFinalService.getUniquePublishers();
+
+      res.json({
+        success: true,
+        data: publishers
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Update publisher information (Super Admin only)
+   * Validates email against main tool - if not matched, converts to contact
+   */
+  static async updatePublisher(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const { publisherName, publisherEmail } = req.body;
+      const userId = req.user!.id;
+      const userRole = req.user!.role;
+
+      // Only Super Admin can update publisher info
+      if (userRole !== 'SUPER_ADMIN') {
+        res.status(403).json({
+          success: false,
+          message: 'Only Super Admin can update publisher information'
+        });
+        return;
+      }
+
+      if (!publisherEmail || !publisherEmail.trim()) {
+        res.status(400).json({
+          success: false,
+          message: 'Publisher email is required'
+        });
+        return;
+      }
+
+      console.log(`[UpdatePublisher DataFinal] Checking email: ${publisherEmail}`);
+
+      // Fetch publishers from main tool to validate
+      const publishersResult = await MainProjectAPIService.fetchPublishers();
+      
+      if (!publishersResult.success || !publishersResult.publishers) {
+        res.status(500).json({
+          success: false,
+          message: 'Failed to fetch publishers from main tool'
+        });
+        return;
+      }
+
+      const emailLower = publisherEmail.toLowerCase().trim();
+      const matchedPublisher = publishersResult.publishers.find(p => 
+        p.email?.toLowerCase().trim() === emailLower
+      );
+
+      let updateData: any;
+
+      if (matchedPublisher) {
+        // Email matches a publisher in main tool
+        console.log(`[UpdatePublisher DataFinal] Email matched publisher: ${matchedPublisher.id}`);
+        updateData = {
+          publisherId: matchedPublisher.id,
+          publisherMatched: true,
+          publisherName: publisherName || matchedPublisher.publisherName,
+          publisherEmail: matchedPublisher.email,
+          contactEmail: null,
+          contactName: null
+        };
+      } else {
+        // Email does NOT match - convert to contact
+        console.log(`[UpdatePublisher DataFinal] Email not matched - converting to contact`);
+        updateData = {
+          publisherId: null,
+          publisherMatched: false,
+          publisherName: null,
+          publisherEmail: null,
+          contactEmail: publisherEmail,
+          contactName: publisherName || 'Contact'
+        };
+      }
+
+      const updated = await DataFinalService.update(id, updateData, userId);
+
+      // Log activity
+      await ActivityLogService.logFromRequest(
+        req,
+        userId,
+        'PUBLISHER_INFO_UPDATED',
+        'DataFinal',
+        id,
+        { 
+          websiteUrl: updated.websiteUrl, 
+          newEmail: publisherEmail,
+          matched: !!matchedPublisher,
+          convertedToContact: !matchedPublisher
+        }
+      );
+
+      res.status(200).json({
+        success: true,
+        message: matchedPublisher 
+          ? 'Publisher updated successfully' 
+          : 'Email not matched - converted to contact',
+        data: {
+          record: updated,
+          matched: !!matchedPublisher,
+          publisherId: matchedPublisher?.id || null
+        }
       });
     } catch (error) {
       next(error);

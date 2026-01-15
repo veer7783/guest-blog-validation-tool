@@ -20,16 +20,25 @@ router.delete('/pushed', requireSuperAdmin, DataFinalController.deletePushedReco
 // Bulk delete unpushed records (Super Admin only)
 router.post('/bulk-delete', requireSuperAdmin, DataFinalController.bulkDelete);
 
+// Push to main project (Super Admin and Contributor)
+router.post('/push-to-main-project', DataFinalController.pushToMainProject);
+
+// Export data by publisher (Super Admin only)
+router.get('/export/publisher', requireSuperAdmin, DataFinalController.exportByPublisher);
+
+// Get unique publishers for export dropdown
+router.get('/publishers/list', DataFinalController.getUniquePublishers);
+
 // Get single data final record
 router.get('/:id', DataFinalController.getById);
 
 // Update data final record
 router.put('/:id', DataFinalController.update);
 
+// Update publisher information (Super Admin only)
+router.put('/:id/publisher', requireSuperAdmin, DataFinalController.updatePublisher);
+
 // Delete data final record
 router.delete('/:id', DataFinalController.delete);
-
-// Push to main project (Super Admin only)
-router.post('/push-to-main-project', requireSuperAdmin, DataFinalController.pushToMainProject);
 
 export default router;

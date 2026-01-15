@@ -35,12 +35,35 @@ export class DataInProcessService {
   /**
    * Bulk create data in process records
    */
-  static async bulkCreate(records: Array<DataInProcessCreateRequest & {
+  static async bulkCreate(records: Array<{
+    websiteUrl: string;
+    category?: string;
+    language?: string;
+    country?: string;
+    daRange?: string;
+    price?: number;
+    liBasePrice?: number;
+    linkType?: string;
+    tat?: string;
+    publisherName?: string;
+    publisherEmail?: string;
+    publisherContact?: string;
+    notes?: string;
+    uploadTaskId: string;
+    da?: number;
+    dr?: number;
+    traffic?: number;
+    ss?: number;
+    keywords?: number;
     publisherId?: string;
     publisherMatched?: boolean;
     contactName?: string;
     contactEmail?: string;
+    uploadedBy?: string;
   }>) {
+    console.log('[DataInProcess.bulkCreate] Creating', records.length, 'records');
+    console.log('[DataInProcess.bulkCreate] First record uploadedBy:', records[0]?.uploadedBy);
+    
     const created = await prisma.dataInProcess.createMany({
       data: records.map(r => ({
         websiteUrl: r.websiteUrl,
@@ -49,6 +72,7 @@ export class DataInProcessService {
         country: r.country,
         daRange: r.daRange,
         price: r.price,
+        liBasePrice: r.liBasePrice,
         linkType: r.linkType,
         tat: r.tat,
         publisherName: r.publisherName,
@@ -59,11 +83,18 @@ export class DataInProcessService {
         contactName: r.contactName,
         contactEmail: r.contactEmail,
         notes: r.notes,
+        da: r.da,
+        dr: r.dr,
+        traffic: r.traffic,
+        ss: r.ss,
+        keywords: r.keywords,
+        uploadedBy: r.uploadedBy,
         status: 'PENDING',
         uploadTaskId: r.uploadTaskId
       }))
     });
 
+    console.log('[DataInProcess.bulkCreate] Successfully created', created.count, 'records');
     return { count: created.count };
   }
 
@@ -83,6 +114,14 @@ export class DataInProcessService {
         assignedTo: userId
       };
     }
+    
+    // Filter by uploaded user for Contributor role
+    if (userId && userRole === 'CONTRIBUTOR') {
+      where.uploadedBy = userId;
+      console.log('[DataInProcess.getAll] CONTRIBUTOR filter - uploadedBy:', userId);
+    }
+
+    console.log('[DataInProcess.getAll] Where clause:', JSON.stringify(where));
 
     const [data, total] = await Promise.all([
       prisma.dataInProcess.findMany({
@@ -148,6 +187,36 @@ export class DataInProcessService {
       throw new AppError('Data not found', 404);
     }
 
+    // If publisher email is being changed, validate against main tool
+    if (updateData.publisherEmail && updateData.publisherEmail !== existing.publisherEmail) {
+      const MainProjectAPIService = require('./mainProjectAPI.service').MainProjectAPIService;
+      const publishersResult = await MainProjectAPIService.fetchPublishers();
+      
+      if (publishersResult.success && publishersResult.publishers) {
+        const emailLower = updateData.publisherEmail.toLowerCase().trim();
+        const matchedPublisher = publishersResult.publishers.find((p: any) => 
+          p.email?.toLowerCase().trim() === emailLower
+        );
+
+        if (matchedPublisher) {
+          // Email matches - update as publisher
+          updateData.publisherId = matchedPublisher.id;
+          updateData.publisherMatched = true;
+          updateData.publisherName = updateData.publisherName || matchedPublisher.publisherName;
+          updateData.contactEmail = undefined;
+          updateData.contactName = undefined;
+        } else {
+          // Email doesn't match - convert to contact
+          updateData.publisherId = undefined;
+          updateData.publisherMatched = false;
+          updateData.contactEmail = updateData.publisherEmail;
+          updateData.contactName = updateData.publisherName || 'Contact';
+          updateData.publisherEmail = undefined;
+          updateData.publisherName = undefined;
+        }
+      }
+    }
+
     // If status is being changed to REACHED, move to DataFinal
     if (updateData.status === 'REACHED' && existing.status !== 'REACHED') {
       // Get user info for tracking who marked as reached
@@ -181,6 +250,7 @@ export class DataInProcessService {
         dr: updateData.dr ?? existing.dr,
         traffic: updateData.traffic ?? existing.traffic,
         ss: updateData.ss ?? existing.ss,
+        keywords: updateData.keywords ?? existing.keywords,
         gbBasePrice: gbPrice,
         liBasePrice: liPrice
       };
@@ -211,8 +281,10 @@ export class DataInProcessService {
           dr: mergedData.dr,
           traffic: mergedData.traffic,
           ss: mergedData.ss,
+          keywords: mergedData.keywords,
           gbBasePrice: mergedData.gbBasePrice,
-          liBasePrice: mergedData.liBasePrice
+          liBasePrice: mergedData.liBasePrice,
+          uploadedBy: existing.uploadedBy // Preserve original uploader
         }
       });
 
@@ -269,6 +341,7 @@ export class DataInProcessService {
         dr: updateData.dr,
         traffic: updateData.traffic,
         ss: updateData.ss,
+        keywords: updateData.keywords !== undefined ? updateData.keywords : null,
         category: updateData.category,
         country: updateData.country,
         language: updateData.language,
@@ -279,6 +352,7 @@ export class DataInProcessService {
         liBasePrice: updateData.liBasePrice,
         linkType: updateData.linkType,
         notes: updateData.notes,
+        comment: updateData.comment,
         status: updateData.status,
         lastModifiedBy: updatedBy,
         lastModifiedByName: user ? `${user.firstName} ${user.lastName}` : undefined
@@ -327,7 +401,16 @@ export class DataInProcessService {
       publisherName: d.publisherName || undefined,
       publisherEmail: d.publisherEmail || undefined,
       publisherContact: d.publisherContact || undefined,
-      notes: d.notes || undefined
+      notes: d.notes || undefined,
+      da: d.da || undefined,
+      dr: d.dr || undefined,
+      traffic: d.traffic || undefined,
+      ss: d.ss || undefined,
+      keywords: d.keywords || undefined,
+      gbBasePrice: d.gbBasePrice || undefined,
+      liBasePrice: d.liBasePrice || undefined,
+      status: d.status || undefined,
+      negotiationStatus: d.negotiationStatus || undefined
     }));
 
     // Push to main project
@@ -357,6 +440,8 @@ export class DataInProcessService {
             dr: record.dr,
             traffic: record.traffic,
             ss: record.ss,
+            keywords: record.keywords,
+            uploadedBy: record.uploadedBy,
             mainProjectId: result.mainProjectId || null,
             pushedAt: new Date(),
             pushedBy

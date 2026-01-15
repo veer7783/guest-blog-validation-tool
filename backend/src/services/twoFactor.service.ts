@@ -59,12 +59,12 @@ export class TwoFactorService {
       create: {
         userId,
         secret: secret.base32,
-        backupCodes: hashedBackupCodes,
+        backupCodes: JSON.stringify(hashedBackupCodes),
         isEnabled: false
       },
       update: {
         secret: secret.base32,
-        backupCodes: hashedBackupCodes,
+        backupCodes: JSON.stringify(hashedBackupCodes),
         isEnabled: false
       }
     });
@@ -246,7 +246,7 @@ export class TwoFactorService {
         const updatedCodes = backupCodes.filter((_, index) => index !== i);
         await prisma.twoFactorAuth.update({
           where: { userId },
-          data: { backupCodes: updatedCodes as any }
+          data: { backupCodes: JSON.stringify(updatedCodes) }
         });
 
         // Log backup code usage
@@ -305,7 +305,7 @@ export class TwoFactorService {
     // Update backup codes
     await prisma.twoFactorAuth.update({
       where: { userId },
-      data: { backupCodes: hashedBackupCodes }
+      data: { backupCodes: JSON.stringify(hashedBackupCodes) }
     });
 
     // Log activity

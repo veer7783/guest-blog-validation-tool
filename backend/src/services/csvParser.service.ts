@@ -48,7 +48,7 @@ export class CSVParserService {
               errors
             });
           } else {
-            // Extract price if provided (GB Base Price column)
+            // Extract GB Base Price if provided
             const priceValue = row.gb_base_price || row.price || row.base_price || row.gbbaseprice;
             let price: number | undefined = undefined;
             
@@ -59,16 +59,89 @@ export class CSVParserService {
               }
             }
 
+            // Extract LI Base Price if provided
+            const liPriceValue = row.li_base_price || row.libaseprice || row.li_price;
+            let liBasePrice: number | undefined = undefined;
+            
+            if (liPriceValue !== undefined && liPriceValue !== null && liPriceValue !== '') {
+              const parsedLiPrice = parseFloat(liPriceValue.toString().replace(/[^0-9.]/g, ''));
+              if (!isNaN(parsedLiPrice) && parsedLiPrice >= 0) {
+                liBasePrice = parsedLiPrice;
+              }
+            }
+
             // Extract publisher if provided (only check 'publisher' column)
             const publisher = row.publisher || '';
 
-            // Store the normalized domain, price, and publisher (if provided)
+            // Extract additional fields if provided
+            const daValue = row.da || row.domain_authority || '';
+            const drValue = row.dr || row.domain_rating || '';
+            const trafficValue = row.traffic || row.monthly_traffic || '';
+            const ssValue = row.ss || row.spam_score || '';
+            const keywordsValue = row.keywords || row.number_of_keywords || '';
+            const categoryValue = row.category || '';
+            const countryValue = row.country || '';
+            const languageValue = row.language || '';
+            const tatValue = row.tat || row.turnaround_time || '';
+
+            // Parse numeric values with validation
+            let da: number | undefined = undefined;
+            let dr: number | undefined = undefined;
+            let traffic: number | undefined = undefined;
+            let ss: number | undefined = undefined;
+            let keywords: number | undefined = undefined;
+
+            if (daValue && daValue !== '') {
+              const parsedDA = parseFloat(daValue.toString().replace(/[^0-9.]/g, ''));
+              if (!isNaN(parsedDA) && parsedDA >= 0 && parsedDA <= 100) {
+                da = parsedDA;
+              }
+            }
+
+            if (drValue && drValue !== '') {
+              const parsedDR = parseFloat(drValue.toString().replace(/[^0-9.]/g, ''));
+              if (!isNaN(parsedDR) && parsedDR >= 0 && parsedDR <= 100) {
+                dr = parsedDR;
+              }
+            }
+
+            if (trafficValue && trafficValue !== '') {
+              const parsedTraffic = parseFloat(trafficValue.toString().replace(/[^0-9.]/g, ''));
+              if (!isNaN(parsedTraffic) && parsedTraffic >= 0) {
+                traffic = parsedTraffic;
+              }
+            }
+
+            if (ssValue && ssValue !== '') {
+              const parsedSS = parseFloat(ssValue.toString().replace(/[^0-9.]/g, ''));
+              if (!isNaN(parsedSS) && parsedSS >= 0 && parsedSS <= 100) {
+                ss = parsedSS;
+              }
+            }
+
+            if (keywordsValue && keywordsValue !== '') {
+              const parsedKeywords = parseFloat(keywordsValue.toString().replace(/[^0-9.]/g, ''));
+              if (!isNaN(parsedKeywords) && parsedKeywords >= 0) {
+                keywords = parsedKeywords;
+              }
+            }
+
+            // Store the normalized domain and all provided fields (only include non-empty values)
             const validRow: CSVRow = {
               websiteUrl: normalizeDomain(websiteUrl),
               price: price !== undefined ? price.toString() : undefined,
-              publisher: publisher.trim() || undefined
-              // All other fields (category, language, country, DA, DR, etc.) 
-              // will be empty and filled later in "Data in Process" page
+              liBasePrice: liBasePrice !== undefined ? liBasePrice.toString() : undefined,
+              publisher: publisher.trim() || undefined,
+              // Additional fields - only include if they have values
+              ...(da !== undefined && { da: da }),
+              ...(dr !== undefined && { dr: dr }),
+              ...(traffic !== undefined && { traffic: traffic }),
+              ...(ss !== undefined && { ss: ss }),
+              ...(keywords !== undefined && { keywords: keywords }),
+              ...(categoryValue.trim() && { category: categoryValue.trim() }),
+              ...(countryValue.trim() && { country: countryValue.trim() }),
+              ...(languageValue.trim() && { language: languageValue.trim() }),
+              ...(tatValue.trim() && { tat: tatValue.trim() })
             };
 
             validRows.push(validRow);
@@ -115,6 +188,35 @@ export class CSVParserService {
       'https://example2.com,75,Jane Smith',
       'www.example3.com,100,',
       'http://example4.com,125,publisher@email.com'
+    ];
+
+    return `${headers.join(',')}\n${exampleRows.join('\n')}`;
+  }
+
+  /**
+   * Generate comprehensive CSV template with all supported fields
+   */
+  static generateFullTemplate(): string {
+    const headers = [
+      'Site',
+      'GB Base Price',
+      'LI Base Price',
+      'Publisher',
+      'DA',
+      'DR', 
+      'Traffic',
+      'SS',
+      'Keywords',
+      'Category',
+      'Country',
+      'Language',
+      'TAT'
+    ];
+    const exampleRows = [
+      'example.com,50,45,john@publisher.com,65,70,50000,15,150,Technology,USA,English,3-5 days',
+      'https://example2.com,75,70,Jane Smith,80,85,100000,10,250,Health,UK,English,2-4 days',
+      'www.example3.com,100,90,,45,50,25000,25,100,Finance,Canada,English,1-3 days',
+      'http://example4.com,125,115,publisher@email.com,90,95,200000,5,300,Business,Australia,English,4-7 days'
     ];
 
     return `${headers.join(',')}\n${exampleRows.join('\n')}`;

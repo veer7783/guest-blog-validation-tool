@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE_URL } from '../config';
 import {
   Card,
   CardContent,
@@ -77,7 +78,7 @@ const ActivityLog: React.FC = () => {
       if (actionFilter) params.action = actionFilter;
       if (entityTypeFilter) params.entityType = entityTypeFilter;
       
-      const response = await axios.get('http://localhost:5000/api/activity-logs', {
+      const response = await axios.get(`${API_BASE_URL}/activity-logs`, {
         headers: { Authorization: `Bearer ${token}` },
         params
       });

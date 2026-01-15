@@ -6,6 +6,66 @@ import { ActivityLogService } from './activityLog.service';
 
 export class UserService {
   /**
+   * Create a new user
+   */
+  static async createUser(
+    data: { firstName: string; lastName: string; email: string; password: string; role?: 'SUPER_ADMIN' | 'ADMIN' | 'USER' | 'CONTRIBUTOR'; assignedAdminId?: string },
+    createdBy: string,
+    ipAddress: string,
+    userAgent: string | null
+  ) {
+    const { email, password, firstName, lastName, role = 'ADMIN', assignedAdminId } = data;
+
+    // Check if user already exists
+    const existingUser = await prisma.user.findUnique({
+      where: { email }
+    });
+
+    if (existingUser) {
+      throw new AppError('User with this email already exists', 400);
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create user
+    const user = await prisma.user.create({
+      data: {
+        email,
+        password: hashedPassword,
+        firstName,
+        lastName,
+        role,
+        assignedAdminId,
+        isActive: true
+      },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        isActive: true,
+        assignedAdminId: true,
+        createdAt: true
+      }
+    });
+
+    // Log activity
+    await ActivityLogService.createLog(
+      createdBy,
+      'USER_CREATE',
+      'User',
+      user.id,
+      { email: user.email, role: user.role },
+      ipAddress,
+      userAgent
+    );
+
+    return user;
+  }
+
+  /**
    * Get all users with pagination
    */
   static async getAllUsers(filters: {
@@ -43,6 +103,7 @@ export class UserService {
           lastName: true,
           role: true,
           isActive: true,
+          assignedAdminId: true,
           createdAt: true,
           updatedAt: true,
           twoFactorAuth: {
@@ -145,14 +206,21 @@ export class UserService {
     }
 
     // Update user
+    const updateData: any = {};
+    if (data.email) updateData.email = data.email;
+    if (data.firstName) updateData.firstName = data.firstName;
+    if (data.lastName) updateData.lastName = data.lastName;
+    if (data.isActive !== undefined) updateData.isActive = data.isActive;
+    if ((data as any).role) updateData.role = (data as any).role;
+    if ('assignedAdminId' in (data as any)) {
+      updateData.assignedAdminId = (data as any).assignedAdminId || null;
+    }
+
+    console.log('Update data being sent to Prisma:', JSON.stringify(updateData, null, 2));
+
     const updatedUser = await prisma.user.update({
       where: { id },
-      data: {
-        ...(data.email && { email: data.email }),
-        ...(data.firstName && { firstName: data.firstName }),
-        ...(data.lastName && { lastName: data.lastName }),
-        ...(data.isActive !== undefined && { isActive: data.isActive })
-      },
+      data: updateData,
       select: {
         id: true,
         email: true,
@@ -160,6 +228,7 @@ export class UserService {
         lastName: true,
         role: true,
         isActive: true,
+        assignedAdminId: true,
         createdAt: true,
         updatedAt: true
       }
@@ -365,7 +434,7 @@ export class UserService {
       create: {
         userId,
         secret: secret.base32,
-        backupCodes: [],
+        backupCodes: JSON.stringify([]),
         isEnabled: true
       },
       update: {

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { API_BASE_URL } from '../config';
 import {
   Card,
   CardContent,
@@ -45,6 +46,7 @@ interface PushedDataRecord {
   dr?: number;
   traffic?: number;
   ss?: number;
+  keywords?: number;
   category?: string;
   country?: string;
   language?: string;
@@ -140,7 +142,7 @@ const PushedData: React.FC = () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
-      const response = await axios.get('http://localhost:5000/api/data-final/pushed', {
+      const response = await axios.get(`${API_BASE_URL}/data-final/pushed`, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
@@ -199,7 +201,7 @@ const PushedData: React.FC = () => {
         ? [recordToDelete.id] 
         : selectedIds;
 
-      const response = await axios.delete('http://localhost:5000/api/data-final/pushed', {
+      const response = await axios.delete(`${API_BASE_URL}/data-final/pushed`, {
         headers: { Authorization: `Bearer ${token}` },
         data: { ids: idsToDelete }
       });
@@ -386,6 +388,8 @@ const PushedData: React.FC = () => {
                     <TableCell><strong>DA</strong></TableCell>
                     <TableCell><strong>DR</strong></TableCell>
                     <TableCell><strong>Traffic</strong></TableCell>
+                    <TableCell><strong>SS</strong></TableCell>
+                    <TableCell><strong>Keywords</strong></TableCell>
                     <TableCell><strong>Category</strong></TableCell>
                     <TableCell><strong>GB Base Price</strong></TableCell>
                     <TableCell><strong>LI Base Price</strong></TableCell>
@@ -424,6 +428,12 @@ const PushedData: React.FC = () => {
                       </TableCell>
                       <TableCell>
                         {row.traffic || <Typography variant="caption" color="text.secondary">-</Typography>}
+                      </TableCell>
+                      <TableCell>
+                        {row.ss || <Typography variant="caption" color="text.secondary">-</Typography>}
+                      </TableCell>
+                      <TableCell>
+                        {row.keywords || <Typography variant="caption" color="text.secondary">-</Typography>}
                       </TableCell>
                       <TableCell>
                         {row.category || <Typography variant="caption" color="text.secondary">Not set</Typography>}
@@ -520,7 +530,8 @@ const PushedData: React.FC = () => {
               <Typography variant="subtitle2" color="text.secondary">Metrics</Typography>
               <Typography variant="body1" sx={{ mb: 2 }}>
                 DA: {selectedRecord.da || '-'} | DR: {selectedRecord.dr || '-'} | 
-                Traffic: {selectedRecord.traffic || '-'} | SS: {selectedRecord.ss || '-'}
+                Traffic: {selectedRecord.traffic || '-'} | SS: {selectedRecord.ss || '-'} | 
+                Keywords: {selectedRecord.keywords || '-'}
               </Typography>
 
               <Typography variant="subtitle2" color="text.secondary">Pricing</Typography>

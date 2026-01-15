@@ -16,10 +16,12 @@ router.get('/template', UploadController.downloadTemplate);
 // Download CSV template with price column
 router.get('/template-with-price', UploadController.downloadTemplateWithPrice);
 
-// Upload CSV (Super Admin only, with rate limiting)
+// Download comprehensive CSV template with all fields
+router.get('/template-full', UploadController.downloadFullTemplate);
+
+// Upload CSV (Super Admin and Contributor, with rate limiting)
 router.post(
   '/csv',
-  isSuperAdmin,
   uploadLimiter,
   uploadCSV.single('file'),
   handleUploadError,

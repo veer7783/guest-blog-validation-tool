@@ -41,7 +41,7 @@ export class ActivityLogService {
           action,
           entityType,
           entityId,
-          details: details || undefined,
+          details: details ? JSON.stringify(details) : undefined,
           ipAddress,
           userAgent
         }

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Grid, Card, CardContent, Typography, Box, CircularProgress } from '@mui/material';
+import { API_BASE_URL } from '../config';
 import {
   People as PeopleIcon,
   CloudUpload as AssignmentIcon,
@@ -45,7 +46,7 @@ const Dashboard: React.FC = () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
-      const response = await axios.get('http://localhost:5000/api/dashboard/stats', {
+      const response = await axios.get(`${API_BASE_URL}/dashboard/stats`, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
